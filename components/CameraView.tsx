@@ -45,7 +45,6 @@ export const CameraView: React.FC<CameraViewProps> = ({
   const [isTorchOn, setIsTorchOn] = useState<boolean>(false);
   const [hasTorch, setHasTorch] = useState<boolean>(false);
   const [isDragging, setIsDragging] = useState<boolean>(false);
-  const [isVideoPlaying, setIsVideoPlaying] = useState<boolean>(false);
 
   // Stop camera tracks cleanly
   const stopCamera = useCallback(() => {
@@ -63,7 +62,6 @@ export const CameraView: React.FC<CameraViewProps> = ({
       videoRef.current.srcObject = null;
     }
     setIsCameraActive(false);
-    setIsVideoPlaying(false);
     setIsTorchOn(false);
     setHasTorch(false);
   }, [stream]);
@@ -81,17 +79,7 @@ export const CameraView: React.FC<CameraViewProps> = ({
         }));
       setDevices(videoDevs);
 
-      // If there's a Canon or external camera detected, prioritize selecting it!
-      const canonCam = videoDevs.find(
-        (d) =>
-          d.label.toLowerCase().includes('canon') ||
-          d.label.toLowerCase().includes('r50') ||
-          d.label.toLowerCase().includes('eos') ||
-          d.label.toLowerCase().includes('uvc')
-      );
-      if (canonCam && !selectedDeviceId) {
-        setSelectedDeviceId(canonCam.deviceId);
-      } else if (videoDevs.length > 0 && !selectedDeviceId) {
+      if (videoDevs.length > 0 && !selectedDeviceId) {
         setSelectedDeviceId(videoDevs[0].deviceId);
       }
     } catch (e) {
@@ -104,17 +92,31 @@ export const CameraView: React.FC<CameraViewProps> = ({
     updateDeviceList();
   }, [updateDeviceList]);
 
+  // Connect MediaStream to Video element whenever stream changes
+  useEffect(() => {
+    if (videoRef.current && stream) {
+      const video = videoRef.current;
+      video.srcObject = stream;
+      
+      const playVideo = () => {
+        video.play().catch((err) => {
+          console.warn('Video play error on loadedmetadata:', err);
+        });
+      };
+
+      video.onloadedmetadata = playVideo;
+      playVideo();
+    }
+  }, [stream]);
+
   // Start camera stream with robust fallback
   const startCamera = useCallback(async (deviceIdToUse?: string) => {
     stopCamera();
     setCameraError(null);
-    setIsVideoPlaying(false);
 
     const targetDevId = deviceIdToUse || selectedDeviceId;
 
-    // Strategy 1: Target Device ID or ideal constraints
     const attemptConstraints: MediaStreamConstraints[] = [
-      // Attempt 1: Target device with ideal 1080p
       targetDevId
         ? {
             video: {
@@ -132,7 +134,6 @@ export const CameraView: React.FC<CameraViewProps> = ({
             },
             audio: false,
           },
-      // Attempt 2: Target device with default parameters
       targetDevId
         ? {
             video: { deviceId: { exact: targetDevId } },
@@ -142,7 +143,6 @@ export const CameraView: React.FC<CameraViewProps> = ({
             video: { facingMode: { ideal: facingMode } },
             audio: false,
           },
-      // Attempt 3: General video stream
       {
         video: true,
         audio: false,
@@ -166,11 +166,11 @@ export const CameraView: React.FC<CameraViewProps> = ({
       console.error('All camera attempts failed:', lastErr);
       let message = 'ไม่สามารถดึงภาพจากกล้องได้';
       if (lastErr?.name === 'NotReadableError' || lastErr?.name === 'TrackStartError') {
-        message = 'กล้องกำลังถูกโปรแกรมอื่นใช้งานอยู่ (เช่น โปรแกรมกล้อง Windows, OBS, EOS Utility, หรือ Zoom) กรุณาปิดโปรแกรมเหล่านั้นก่อน แล้วกด "ลองใหม่อีกครั้ง"';
+        message = 'กล้องกำลังถูกโปรแกรมอื่นใช้งานอยู่ (เช่น โปรแกรมกล้อง Windows, OBS, หรือโปรแกรมประชุม) กรุณาปิดโปรแกรมเหล่านั้นก่อน แล้วกด "ลองใหม่อีกครั้ง"';
       } else if (lastErr?.name === 'NotAllowedError') {
         message = 'เบราว์เซอร์ถูกบล็อกการเข้าถึงกล้อง กรุณากดไอคอนแม่กุญแจที่แถบ URL เพื่ออนุญาตให้ใช้งานกล้อง';
       } else if (lastErr?.name === 'NotFoundError') {
-        message = 'ไม่พบอุปกรณ์กล้อง กรุณาตรวจสอบสาย Type-C หรือเปิดเครื่องกล้อง Canon R50';
+        message = 'ไม่พบอุปกรณ์กล้อง กรุณาตรวจสอบสายเชื่อมต่อ หรือเปิดการทำงานของกล้อง';
       } else {
         message = `เกิดข้อผิดพลาด: ${lastErr?.message || 'ไม่สามารถเปิดกล้องได้'}`;
       }
@@ -182,27 +182,6 @@ export const CameraView: React.FC<CameraViewProps> = ({
     setStream(mediaStream);
     setIsCameraActive(true);
 
-    if (videoRef.current) {
-      const video = videoRef.current;
-      video.srcObject = mediaStream;
-      
-      video.onloadedmetadata = () => {
-        video
-          .play()
-          .then(() => setIsVideoPlaying(true))
-          .catch((e) => {
-            console.warn('Video play onloadedmetadata failed:', e);
-            // Retry play on user interaction
-          });
-      };
-
-      // Direct play call
-      video
-        .play()
-        .then(() => setIsVideoPlaying(true))
-        .catch((e) => console.warn('Direct video play error:', e));
-    }
-
     // Check flashlight support
     const track = mediaStream.getVideoTracks()[0];
     if (track) {
@@ -212,7 +191,7 @@ export const CameraView: React.FC<CameraViewProps> = ({
       }
     }
 
-    // Refresh devices list
+    // Refresh devices list to get exact labels now that permission is granted
     updateDeviceList();
   }, [facingMode, selectedDeviceId, stopCamera, updateDeviceList]);
 
@@ -327,52 +306,52 @@ export const CameraView: React.FC<CameraViewProps> = ({
             : 'border-slate-800'
         }`}
       >
-        {/* Active Live Video Stream */}
+        {/* Video Element (ALWAYS mounted in DOM so ref is never null) */}
+        <video
+          ref={videoRef}
+          playsInline
+          autoPlay
+          muted
+          className={`w-full h-full object-cover ${
+            isCameraActive && !currentImage ? 'block' : 'hidden'
+          }`}
+        />
+
+        {/* Active Live Video Stream Overlay */}
         {isCameraActive && !currentImage && (
-          <>
-            <video
-              ref={videoRef}
-              playsInline
-              autoPlay
-              muted
-              className="w-full h-full object-cover"
-            />
-
-            {/* AR Alignment Guide HUD */}
-            <div className="absolute inset-0 pointer-events-none flex flex-col justify-between p-4 sm:p-6">
-              {/* Top status tag & Camera label */}
-              <div className="flex justify-between items-center gap-2">
-                <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-950/80 border border-cyan-500/60 text-cyan-400 text-xs font-mono backdrop-blur-sm">
-                  <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
-                  <span>LIVE FEED</span>
-                </div>
-
-                <div className="text-[11px] font-mono text-cyan-300/90 bg-slate-950/80 px-2.5 py-1 rounded-lg border border-slate-800 backdrop-blur-sm truncate max-w-[200px]">
-                  📷 {selectedDeviceObj?.label || (facingMode === 'environment' ? 'กล้องหลัง' : 'กล้องหน้า')}
-                </div>
+          <div className="absolute inset-0 pointer-events-none flex flex-col justify-between p-4 sm:p-6">
+            {/* Top status tag & Camera label */}
+            <div className="flex justify-between items-center gap-2">
+              <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-950/80 border border-cyan-500/60 text-cyan-400 text-xs font-mono backdrop-blur-sm">
+                <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
+                <span>LIVE FEED</span>
               </div>
 
-              {/* Target Bounding Frame for Circuit & Breadboard */}
-              <div className="relative mx-auto w-4/5 h-3/5 border-2 border-dashed border-cyan-400/60 rounded-2xl flex items-center justify-center">
-                <Crosshair className="w-10 h-10 text-cyan-400/40 animate-pulse" />
-                <div className="absolute top-2 left-3 text-[11px] font-semibold text-cyan-300/90 bg-slate-950/70 px-2 py-0.5 rounded">
-                  วาง Arduino Nano + Breadboard ในกรอบนี้
-                </div>
-
-                {/* Subzone hints */}
-                <div className="absolute bottom-2 right-3 text-[10px] text-slate-300/80 bg-slate-950/70 px-2 py-0.5 rounded">
-                  💡 ให้เห็นหัวพิน D13 / GND และขั้ว LED ชัดเจน
-                </div>
-              </div>
-
-              {/* Bottom hint */}
-              <div className="text-center">
-                <span className="px-3 py-1 rounded-full bg-slate-950/90 border border-slate-800 text-[11px] text-slate-300">
-                  กดปุ่ม &ldquo;จับภาพ & วิเคราะห์วงจร&rdquo; ด้านล่างเมื่อจัดมุมกล้องเรียบร้อย
-                </span>
+              <div className="text-[11px] font-mono text-cyan-300/90 bg-slate-950/80 px-2.5 py-1 rounded-lg border border-slate-800 backdrop-blur-sm truncate max-w-[200px]">
+                📷 {selectedDeviceObj?.label || (facingMode === 'environment' ? 'กล้องหลัง' : 'กล้องหน้า')}
               </div>
             </div>
-          </>
+
+            {/* Target Bounding Frame for Circuit & Breadboard */}
+            <div className="relative mx-auto w-4/5 h-3/5 border-2 border-dashed border-cyan-400/60 rounded-2xl flex items-center justify-center">
+              <Crosshair className="w-10 h-10 text-cyan-400/40 animate-pulse" />
+              <div className="absolute top-2 left-3 text-[11px] font-semibold text-cyan-300/90 bg-slate-950/70 px-2 py-0.5 rounded">
+                วาง Arduino Nano + Breadboard ในกรอบนี้
+              </div>
+
+              {/* Subzone hints */}
+              <div className="absolute bottom-2 right-3 text-[10px] text-slate-300/80 bg-slate-950/70 px-2 py-0.5 rounded">
+                💡 ให้เห็นหัวพิน D13 / GND และขั้ว LED ชัดเจน
+              </div>
+            </div>
+
+            {/* Bottom hint */}
+            <div className="text-center">
+              <span className="px-3 py-1 rounded-full bg-slate-950/90 border border-slate-800 text-[11px] text-slate-300">
+                กดปุ่ม &ldquo;จับภาพ & วิเคราะห์วงจร&rdquo; ด้านล่างเมื่อจัดมุมกล้องเรียบร้อย
+              </span>
+            </div>
+          </div>
         )}
 
         {/* When Camera is OFF and No Image is Selected */}
