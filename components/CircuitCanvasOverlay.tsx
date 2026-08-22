@@ -1,18 +1,19 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import { DetectedComponent } from '@/types/circuit';
 import {
   CheckCircle2,
   XCircle,
   AlertTriangle,
-  Eye,
-  EyeOff,
   ZoomIn,
   ZoomOut,
   Maximize2,
-  Layers,
+  SplitSquareVertical,
+  Sliders,
+  Image as ImageIcon,
   Sparkles,
+  Eye,
 } from 'lucide-react';
 
 interface CircuitCanvasOverlayProps {
@@ -31,13 +32,15 @@ export const CircuitCanvasOverlay: React.FC<CircuitCanvasOverlayProps> = ({
   onSelectComponent,
 }) => {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
-  const [overlayMode, setOverlayMode] = useState<'full' | 'box_only' | 'hidden'>('full');
+  const [viewMode, setViewMode] = useState<'annotated' | 'side_by_side' | 'slider' | 'original'>('annotated');
+  const [sliderPos, setSliderPos] = useState<number>(50); // 0 - 100%
+  const [isDraggingSlider, setIsDraggingSlider] = useState<boolean>(false);
   const [zoomLevel, setZoomLevel] = useState<number>(1);
   const [panPos, setPanPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
-  const [isDragging, setIsDragging] = useState<boolean>(false);
-  const [dragStart, setDragStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState<boolean>(false);
+  const [panStart, setPanStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
-  const containerRef = useRef<HTMLDivElement>(null);
+  const sliderContainerRef = useRef<HTMLDivElement>(null);
 
   if (!imageSrc) return null;
 
@@ -58,64 +61,226 @@ export const CircuitCanvasOverlay: React.FC<CircuitCanvasOverlayProps> = ({
     setPanPos({ x: 0, y: 0 });
   };
 
-  // Pan handlers when zoomed in
+  // Slider drag handler
+  const handleSliderMove = useCallback((clientX: number) => {
+    if (!sliderContainerRef.current) return;
+    const rect = sliderContainerRef.current.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const percent = Math.max(0, Math.min(100, (x / rect.width) * 100));
+    setSliderPos(percent);
+  }, []);
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (isDraggingSlider && e.touches[0]) {
+      handleSliderMove(e.touches[0].clientX);
+    }
+  };
+
+  // Pan handlers when zoomed
   const handleMouseDown = (e: React.MouseEvent) => {
+    if (viewMode === 'slider' && isDraggingSlider) return;
     if (zoomLevel > 1) {
-      setIsDragging(true);
-      setDragStart({ x: e.clientX - panPos.x, y: e.clientY - panPos.y });
+      setIsPanning(true);
+      setPanStart({ x: e.clientX - panPos.x, y: e.clientY - panPos.y });
     }
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
-    if (isDragging && zoomLevel > 1) {
+    if (isDraggingSlider) {
+      handleSliderMove(e.clientX);
+      return;
+    }
+    if (isPanning && zoomLevel > 1) {
       setPanPos({
-        x: e.clientX - dragStart.x,
-        y: e.clientY - dragStart.y,
+        x: e.clientX - panStart.x,
+        y: e.clientY - panStart.y,
       });
     }
   };
 
-  const handleMouseUp = () => setIsDragging(false);
+  const handleMouseUp = () => {
+    setIsPanning(false);
+    setIsDraggingSlider(false);
+  };
+
+  // SVG Annotation renderer
+  const renderSvgOverlay = () => {
+    return (
+      <svg
+        viewBox="0 0 1000 1000"
+        preserveAspectRatio="none"
+        className="absolute inset-0 w-full h-full pointer-events-auto z-10 select-none"
+      >
+        <defs>
+          <filter id="glowOk" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="5" result="blur" />
+            <feComposite in="SourceGraphic" in2="blur" operator="over" />
+          </filter>
+          <filter id="glowErr" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="6" result="blur" />
+            <feComposite in="SourceGraphic" in2="blur" operator="over" />
+          </filter>
+        </defs>
+
+        {detectedComponents.map((comp) => {
+          if (!comp.box) return null;
+          const { ymin, xmin, ymax, xmax } = comp.box;
+          const width = Math.max(16, xmax - xmin);
+          const height = Math.max(16, ymax - ymin);
+          const isHovered = activeId === comp.id;
+
+          let strokeColor = '#10b981'; // green for ok
+          let fillColor = 'rgba(16, 185, 129, 0.08)';
+          let badgeBg = '#064e3b';
+          let badgeTextColor = '#6ee7b7';
+          let symbol = '✓';
+
+          if (comp.status === 'error') {
+            strokeColor = '#ef4444'; // red for error
+            fillColor = 'rgba(239, 68, 68, 0.12)';
+            badgeBg = '#7f1d1d';
+            badgeTextColor = '#fca5a5';
+            symbol = '✕';
+          } else if (comp.status === 'warning') {
+            strokeColor = '#f59e0b'; // amber
+            fillColor = 'rgba(245, 158, 11, 0.1)';
+            badgeBg = '#78350f';
+            badgeTextColor = '#fcd34d';
+            symbol = '⚠';
+          } else if (comp.type === 'arduino_nano') {
+            strokeColor = '#06b6d4'; // cyan
+            fillColor = 'rgba(6, 182, 212, 0.08)';
+            badgeBg = '#164e63';
+            badgeTextColor = '#67e8f9';
+            symbol = 'μC';
+          }
+
+          return (
+            <g
+              key={comp.id}
+              className="cursor-pointer transition-all duration-150"
+              onMouseEnter={() => setHoveredId(comp.id)}
+              onMouseLeave={() => setHoveredId(null)}
+              onClick={() => onSelectComponent(selectedComponentId === comp.id ? null : comp.id)}
+            >
+              {/* Thin, Sleek Glowing Rectangle */}
+              <rect
+                x={xmin}
+                y={ymin}
+                width={width}
+                height={height}
+                rx="6"
+                fill={isHovered ? fillColor.replace('0.08', '0.2').replace('0.12', '0.25') : fillColor}
+                stroke={strokeColor}
+                strokeWidth={isHovered ? '3.5' : '2'}
+                strokeDasharray={comp.status === 'error' ? '6 4' : undefined}
+                className="transition-all duration-200"
+                filter={isHovered ? (comp.status === 'error' ? 'url(#glowErr)' : 'url(#glowOk)') : undefined}
+              />
+
+              {/* Corner Crosshair Accents */}
+              <path
+                d={`M ${xmin} ${ymin + 12} L ${xmin} ${ymin} L ${xmin + 12} ${ymin}`}
+                fill="none"
+                stroke={strokeColor}
+                strokeWidth="2.5"
+              />
+              <path
+                d={`M ${xmax - 12} ${ymin} L ${xmax} ${ymin} L ${xmax} ${ymin + 12}`}
+                fill="none"
+                stroke={strokeColor}
+                strokeWidth="2.5"
+              />
+              <path
+                d={`M ${xmin} ${ymax - 12} L ${xmin} ${ymax} L ${xmin + 12} ${ymax}`}
+                fill="none"
+                stroke={strokeColor}
+                strokeWidth="2.5"
+              />
+              <path
+                d={`M ${xmax - 12} ${ymax} L ${xmax} ${ymax} L ${xmax - 12} ${ymax}`}
+                fill="none"
+                stroke={strokeColor}
+                strokeWidth="2.5"
+              />
+
+              {/* Minimal Circle Pin Point (Never blocks circuit components) */}
+              <g transform={`translate(${xmin}, ${ymin})`}>
+                <circle cx="0" cy="0" r="9" fill={badgeBg} stroke={strokeColor} strokeWidth="1.5" />
+                <text
+                  x="0"
+                  y="3.5"
+                  fill={badgeTextColor}
+                  fontSize="10"
+                  fontWeight="bold"
+                  textAnchor="middle"
+                >
+                  {symbol}
+                </text>
+              </g>
+            </g>
+          );
+        })}
+      </svg>
+    );
+  };
 
   return (
-    <div className="flex flex-col space-y-2">
-      {/* Control Toolbar on Top of Canvas */}
+    <div className="flex flex-col space-y-2.5">
+      {/* Top Toolbar: View Modes & Zoom Controls */}
       <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-slate-900/90 border border-slate-800 rounded-xl backdrop-blur-md text-xs">
-        {/* Overlay Mode Switcher */}
+        {/* Mode Switcher */}
         <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800">
           <button
-            onClick={() => setOverlayMode('full')}
-            className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-all ${
-              overlayMode === 'full'
+            onClick={() => setViewMode('annotated')}
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${
+              viewMode === 'annotated'
                 ? 'bg-cyan-950 text-cyan-300 border border-cyan-700/60 shadow-sm'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
-            title="แสดงกรอบและป้ายกำกับ"
+            title="ภาพวิเคราะห์ AI พร้อมจุดมาร์กเกอร์"
           >
-            ป้ายกำกับย่อ
+            <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+            <span>ภาพวิเคราะห์ AI</span>
           </button>
+
           <button
-            onClick={() => setOverlayMode('box_only')}
-            className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-all ${
-              overlayMode === 'box_only'
+            onClick={() => setViewMode('side_by_side')}
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${
+              viewMode === 'side_by_side'
                 ? 'bg-cyan-950 text-cyan-300 border border-cyan-700/60 shadow-sm'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
-            title="แสดงเฉพาะเส้นกรอบ ไม่บังภาพ"
+            title="เปรียบเทียบภาพต้นฉบับกับภาพวิเคราะห์ข้างกัน"
           >
-            เฉพาะเส้นกรอบ
+            <SplitSquareVertical className="w-3.5 h-3.5 text-cyan-400" />
+            <span>เปรียบเทียบซ้าย-ขวา</span>
           </button>
+
           <button
-            onClick={() => setOverlayMode('hidden')}
-            className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-all ${
-              overlayMode === 'hidden'
+            onClick={() => setViewMode('slider')}
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${
+              viewMode === 'slider'
                 ? 'bg-cyan-950 text-cyan-300 border border-cyan-700/60 shadow-sm'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
-            title="ซ่อนกรอบ ดูภาพจริงชัดเจน"
+            title="สไลเดอร์รูดเปรียบเทียบ Before/After"
           >
-            <EyeOff className="w-3.5 h-3.5 inline mr-1" />
-            ดูภาพจริง
+            <Sliders className="w-3.5 h-3.5 text-cyan-400" />
+            <span>สไลเดอร์รูดดู</span>
+          </button>
+
+          <button
+            onClick={() => setViewMode('original')}
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${
+              viewMode === 'original'
+                ? 'bg-cyan-950 text-cyan-300 border border-cyan-700/60 shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+            title="ดูภาพต้นฉบับที่ถ่ายมาล้วนๆ"
+          >
+            <ImageIcon className="w-3.5 h-3.5 text-slate-400" />
+            <span>ภาพต้นฉบับ</span>
           </button>
         </div>
 
@@ -129,7 +294,7 @@ export const CircuitCanvasOverlay: React.FC<CircuitCanvasOverlayProps> = ({
           >
             <ZoomOut className="w-3.5 h-3.5" />
           </button>
-          <span className="px-1.5 text-[11px] font-mono text-cyan-400 min-w-[40px] text-center">
+          <span className="px-1.5 text-[11px] font-mono text-cyan-400 min-w-[40px] text-center font-bold">
             {Math.round(zoomLevel * 100)}%
           </span>
           <button
@@ -152,198 +317,150 @@ export const CircuitCanvasOverlay: React.FC<CircuitCanvasOverlayProps> = ({
         </div>
       </div>
 
-      {/* Main Image Viewport Area */}
+      {/* Main Viewport Container */}
       <div
-        ref={containerRef}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
-        className={`relative w-full h-full min-h-[380px] max-h-[550px] flex items-center justify-center bg-slate-950 overflow-hidden rounded-2xl border border-slate-800 select-none ${
-          zoomLevel > 1 ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-default'
+        className={`relative w-full min-h-[380px] max-h-[560px] bg-slate-950 overflow-hidden rounded-2xl border border-slate-800 select-none ${
+          zoomLevel > 1 ? (isPanning ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-default'
         }`}
       >
-        {/* Zoomable Container */}
-        <div
-          className="relative w-full h-full flex items-center justify-center transition-transform duration-75 ease-out"
-          style={{
-            transform: `scale(${zoomLevel}) translate(${panPos.x / zoomLevel}px, ${panPos.y / zoomLevel}px)`,
-            transformOrigin: 'center center',
-          }}
-        >
-          {/* Background Image */}
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={imageSrc}
-            alt="Circuit Under Test"
-            className="w-full h-full object-contain pointer-events-none max-h-[540px]"
-            draggable={false}
-          />
+        {/* MODE 1: SIDE-BY-SIDE (Split Screen 2 Columns) */}
+        {viewMode === 'side_by_side' && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 h-full p-2">
+            {/* Left Box: Original Image */}
+            <div className="relative w-full h-[260px] md:h-[480px] bg-slate-900/50 rounded-xl overflow-hidden border border-slate-800 flex items-center justify-center">
+              <div className="absolute top-2 left-2 z-20 px-2.5 py-0.5 rounded-md bg-slate-950/85 text-slate-300 border border-slate-700 text-[10px] font-bold backdrop-blur-sm">
+                📷 ภาพถ่ายต้นฉบับ (Original)
+              </div>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={imageSrc}
+                alt="Original Circuit"
+                className="w-full h-full object-contain pointer-events-none"
+                style={{
+                  transform: `scale(${zoomLevel}) translate(${panPos.x / zoomLevel}px, ${panPos.y / zoomLevel}px)`,
+                }}
+              />
+            </div>
 
-          {/* Analysis Scanline Animation */}
-          {isAnalyzing && (
-            <div className="absolute inset-0 pointer-events-none z-20">
-              <div className="hud-scanline" />
-              <div className="absolute inset-0 bg-cyan-950/20 backdrop-blur-[1px] flex flex-col items-center justify-center gap-3">
-                <div className="relative flex items-center justify-center">
-                  <div className="w-16 h-16 rounded-full border-2 border-cyan-400 border-t-transparent animate-spin" />
-                  <div className="absolute w-8 h-8 rounded-full bg-cyan-500/30 animate-ping" />
-                </div>
-                <div className="px-4 py-1.5 rounded-full bg-slate-900/90 border border-cyan-500/60 text-cyan-300 text-xs font-mono tracking-wider animate-pulse shadow-lg">
-                  🔍 AI กำลังวิเคราะห์สายไฟและชิ้นส่วนวงจร...
-                </div>
+            {/* Right Box: Inspected Image with AI Overlay */}
+            <div className="relative w-full h-[260px] md:h-[480px] bg-slate-900/50 rounded-xl overflow-hidden border border-cyan-900/60 flex items-center justify-center">
+              <div className="absolute top-2 left-2 z-20 px-2.5 py-0.5 rounded-md bg-slate-950/85 text-cyan-300 border border-cyan-700/60 text-[10px] font-bold backdrop-blur-sm flex items-center gap-1">
+                <Sparkles className="w-3 h-3 text-cyan-400" />
+                <span>ภาพตรวจเช็ควงจร (AI Vision)</span>
+              </div>
+              <div
+                className="relative w-full h-full flex items-center justify-center"
+                style={{
+                  transform: `scale(${zoomLevel}) translate(${panPos.x / zoomLevel}px, ${panPos.y / zoomLevel}px)`,
+                }}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={imageSrc}
+                  alt="Inspected Circuit"
+                  className="w-full h-full object-contain pointer-events-none"
+                />
+                {!isAnalyzing && renderSvgOverlay()}
               </div>
             </div>
-          )}
+          </div>
+        )}
 
-          {/* SVG Overlay */}
-          {!isAnalyzing && overlayMode !== 'hidden' && (
-            <svg
-              viewBox="0 0 1000 1000"
-              preserveAspectRatio="none"
-              className="absolute inset-0 w-full h-full pointer-events-auto z-10"
+        {/* MODE 2: SLIDER (Interactive Drag Before/After) */}
+        {viewMode === 'slider' && (
+          <div
+            ref={sliderContainerRef}
+            onTouchMove={handleTouchMove}
+            className="relative w-full h-[380px] sm:h-[500px] flex items-center justify-center bg-slate-950 overflow-hidden cursor-ew-resize"
+          >
+            {/* Top Labels */}
+            <div className="absolute top-3 left-3 z-30 px-2.5 py-1 rounded-md bg-slate-950/90 border border-slate-700 text-slate-300 text-[11px] font-bold pointer-events-none backdrop-blur-sm">
+              📷 ภาพต้นฉบับ
+            </div>
+            <div className="absolute top-3 right-3 z-30 px-2.5 py-1 rounded-md bg-slate-950/90 border border-cyan-700 text-cyan-300 text-[11px] font-bold pointer-events-none backdrop-blur-sm">
+              🔍 ภาพตรวจเช็ควงจร
+            </div>
+
+            {/* Base Layer: Inspected Image (Right Side) */}
+            <div className="absolute inset-0 w-full h-full flex items-center justify-center">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={imageSrc}
+                alt="Inspected Circuit"
+                className="w-full h-full object-contain pointer-events-none"
+              />
+              {!isAnalyzing && renderSvgOverlay()}
+            </div>
+
+            {/* Clip Layer: Original Clean Image (Left Side) */}
+            <div
+              className="absolute inset-0 w-full h-full overflow-hidden pointer-events-none"
+              style={{ clipPath: `polygon(0 0, ${sliderPos}% 0, ${sliderPos}% 100%, 0 100%)` }}
             >
-              <defs>
-                <filter id="glowOk" x="-20%" y="-20%" width="140%" height="140%">
-                  <feGaussianBlur stdDeviation="5" result="blur" />
-                  <feComposite in="SourceGraphic" in2="blur" operator="over" />
-                </filter>
-                <filter id="glowErr" x="-20%" y="-20%" width="140%" height="140%">
-                  <feGaussianBlur stdDeviation="6" result="blur" />
-                  <feComposite in="SourceGraphic" in2="blur" operator="over" />
-                </filter>
-              </defs>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={imageSrc}
+                alt="Original Circuit"
+                className="w-full h-full object-contain pointer-events-none"
+              />
+            </div>
 
-              {detectedComponents.map((comp, idx) => {
-                if (!comp.box) return null;
-                const { ymin, xmin, ymax, xmax } = comp.box;
-                const width = Math.max(15, xmax - xmin);
-                const height = Math.max(15, ymax - ymin);
-                const isHovered = activeId === comp.id;
+            {/* Draggable Divider Handle Line */}
+            <div
+              onMouseDown={() => setIsDraggingSlider(true)}
+              onTouchStart={() => setIsDraggingSlider(true)}
+              className="absolute top-0 bottom-0 z-30 w-1 bg-cyan-400 shadow-[0_0_12px_rgba(6,182,212,0.8)] cursor-ew-resize flex items-center justify-center pointer-events-auto"
+              style={{ left: `${sliderPos}%` }}
+            >
+              <div className="w-8 h-8 rounded-full bg-slate-950 border-2 border-cyan-400 flex items-center justify-center text-cyan-300 shadow-xl transform active:scale-110 transition-transform">
+                <Sliders className="w-4 h-4" />
+              </div>
+            </div>
+          </div>
+        )}
 
-                let strokeColor = '#10b981'; // green for ok
-                let fillColor = 'rgba(16, 185, 129, 0.08)';
-                let badgeBg = '#064e3b';
-                let badgeTextColor = '#6ee7b7';
-                let iconSymbol = '✓';
+        {/* MODE 3 & 4: ANNOTATED SINGLE VIEW OR ORIGINAL CLEAN VIEW */}
+        {(viewMode === 'annotated' || viewMode === 'original') && (
+          <div
+            className="relative w-full h-[380px] sm:h-[500px] flex items-center justify-center transition-transform duration-75 ease-out"
+            style={{
+              transform: `scale(${zoomLevel}) translate(${panPos.x / zoomLevel}px, ${panPos.y / zoomLevel}px)`,
+              transformOrigin: 'center center',
+            }}
+          >
+            {/* Background Image */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={imageSrc}
+              alt="Circuit View"
+              className="w-full h-full object-contain pointer-events-none max-h-[500px]"
+              draggable={false}
+            />
 
-                if (comp.status === 'error') {
-                  strokeColor = '#ef4444'; // red for error
-                  fillColor = 'rgba(239, 68, 68, 0.12)';
-                  badgeBg = '#7f1d1d';
-                  badgeTextColor = '#fca5a5';
-                  iconSymbol = '✕';
-                } else if (comp.status === 'warning') {
-                  strokeColor = '#f59e0b'; // amber
-                  fillColor = 'rgba(245, 158, 11, 0.1)';
-                  badgeBg = '#78350f';
-                  badgeTextColor = '#fcd34d';
-                  iconSymbol = '⚠';
-                } else if (comp.type === 'arduino_nano') {
-                  strokeColor = '#06b6d4'; // cyan
-                  fillColor = 'rgba(6, 182, 212, 0.08)';
-                  badgeBg = '#164e63';
-                  badgeTextColor = '#67e8f9';
-                  iconSymbol = 'μC';
-                }
+            {/* Analysis Scanline Animation */}
+            {isAnalyzing && (
+              <div className="absolute inset-0 pointer-events-none z-20">
+                <div className="hud-scanline" />
+                <div className="absolute inset-0 bg-cyan-950/20 backdrop-blur-[1px] flex flex-col items-center justify-center gap-3">
+                  <div className="relative flex items-center justify-center">
+                    <div className="w-16 h-16 rounded-full border-2 border-cyan-400 border-t-transparent animate-spin" />
+                    <div className="absolute w-8 h-8 rounded-full bg-cyan-500/30 animate-ping" />
+                  </div>
+                  <div className="px-4 py-1.5 rounded-full bg-slate-900/90 border border-cyan-500/60 text-cyan-300 text-xs font-mono tracking-wider animate-pulse shadow-lg">
+                    🔍 AI กำลังวิเคราะห์สายไฟและชิ้นส่วนวงจร...
+                  </div>
+                </div>
+              </div>
+            )}
 
-                // Short friendly label
-                const shortTitle = comp.label || comp.name.split('(')[0].trim();
-
-                return (
-                  <g
-                    key={comp.id}
-                    className="cursor-pointer transition-all duration-150"
-                    onMouseEnter={() => setHoveredId(comp.id)}
-                    onMouseLeave={() => setHoveredId(null)}
-                    onClick={() => onSelectComponent(selectedComponentId === comp.id ? null : comp.id)}
-                  >
-                    {/* Bounding Box Rectangle (Thin & Elegant) */}
-                    <rect
-                      x={xmin}
-                      y={ymin}
-                      width={width}
-                      height={height}
-                      rx="8"
-                      fill={isHovered ? fillColor.replace('0.08', '0.2').replace('0.12', '0.25') : fillColor}
-                      stroke={strokeColor}
-                      strokeWidth={isHovered ? '3.5' : '2'}
-                      strokeDasharray={comp.status === 'error' ? '6 4' : undefined}
-                      className="transition-all duration-200"
-                      filter={isHovered ? (comp.status === 'error' ? 'url(#glowErr)' : 'url(#glowOk)') : undefined}
-                    />
-
-                    {/* Corner Reticle Accents */}
-                    <path
-                      d={`M ${xmin} ${ymin + 14} L ${xmin} ${ymin} L ${xmin + 14} ${ymin}`}
-                      fill="none"
-                      stroke={strokeColor}
-                      strokeWidth="2.5"
-                    />
-                    <path
-                      d={`M ${xmax - 14} ${ymin} L ${xmax} ${ymin} L ${xmax} ${ymin + 14}`}
-                      fill="none"
-                      stroke={strokeColor}
-                      strokeWidth="2.5"
-                    />
-                    <path
-                      d={`M ${xmin} ${ymax - 14} L ${xmin} ${ymax} L ${xmin + 14} ${ymax}`}
-                      fill="none"
-                      stroke={strokeColor}
-                      strokeWidth="2.5"
-                    />
-                    <path
-                      d={`M ${xmax - 14} ${ymax} L ${xmax} ${ymax} L ${xmax - 14} ${ymax}`}
-                      fill="none"
-                      stroke={strokeColor}
-                      strokeWidth="2.5"
-                    />
-
-                    {/* Compact Non-Obstructive Badge */}
-                    {overlayMode === 'full' && (
-                      <g transform={`translate(${xmin}, ${Math.max(12, ymin - 22)})`}>
-                        {/* Compact Pill Badge */}
-                        <rect
-                          x="0"
-                          y="0"
-                          width={Math.min(180, Math.max(70, shortTitle.length * 7.5 + 24))}
-                          height="20"
-                          rx="5"
-                          fill={badgeBg}
-                          stroke={strokeColor}
-                          strokeWidth="1"
-                          opacity="0.9"
-                        />
-                        {/* Status Icon */}
-                        <text
-                          x="7"
-                          y="14"
-                          fill={badgeTextColor}
-                          fontSize="11"
-                          fontWeight="bold"
-                          fontFamily="sans-serif"
-                        >
-                          {iconSymbol}
-                        </text>
-                        {/* Component Name */}
-                        <text
-                          x="20"
-                          y="14"
-                          fill={badgeTextColor}
-                          fontSize="11"
-                          fontWeight="bold"
-                          fontFamily="sans-serif"
-                        >
-                          {shortTitle.length > 18 ? shortTitle.slice(0, 16) + '...' : shortTitle}
-                        </text>
-                      </g>
-                    )}
-                  </g>
-                );
-              })}
-            </svg>
-          )}
-        </div>
+            {/* SVG Overlay (Only when annotated) */}
+            {!isAnalyzing && viewMode === 'annotated' && renderSvgOverlay()}
+          </div>
+        )}
 
         {/* Floating Tooltip details on Active Component (Bottom Right) */}
         {activeComponent && !isAnalyzing && (
