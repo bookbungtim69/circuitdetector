@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState } from 'react';
 import { DetectedComponent } from '@/types/circuit';
 import {
   CheckCircle2,
@@ -10,7 +10,6 @@ import {
   ZoomOut,
   Maximize2,
   SplitSquareVertical,
-  Sliders,
   Image as ImageIcon,
   Sparkles,
 } from 'lucide-react';
@@ -31,15 +30,11 @@ export const CircuitCanvasOverlay: React.FC<CircuitCanvasOverlayProps> = ({
   onSelectComponent,
 }) => {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<'annotated' | 'side_by_side' | 'slider' | 'original'>('annotated');
-  const [sliderPos, setSliderPos] = useState<number>(50); // 0 - 100%
-  const [isDraggingSlider, setIsDraggingSlider] = useState<boolean>(false);
+  const [viewMode, setViewMode] = useState<'annotated' | 'side_by_side' | 'original'>('annotated');
   const [zoomLevel, setZoomLevel] = useState<number>(1);
   const [panPos, setPanPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState<boolean>(false);
   const [panStart, setPanStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
-
-  const sliderContainerRef = useRef<HTMLDivElement>(null);
 
   if (!imageSrc) return null;
 
@@ -60,24 +55,8 @@ export const CircuitCanvasOverlay: React.FC<CircuitCanvasOverlayProps> = ({
     setPanPos({ x: 0, y: 0 });
   };
 
-  // Slider drag handler
-  const handleSliderMove = useCallback((clientX: number) => {
-    if (!sliderContainerRef.current) return;
-    const rect = sliderContainerRef.current.getBoundingClientRect();
-    const x = clientX - rect.left;
-    const percent = Math.max(0, Math.min(100, (x / rect.width) * 100));
-    setSliderPos(percent);
-  }, []);
-
-  const handleTouchMove = (e: React.TouchEvent) => {
-    if (isDraggingSlider && e.touches[0]) {
-      handleSliderMove(e.touches[0].clientX);
-    }
-  };
-
   // Pan handlers when zoomed
   const handleMouseDown = (e: React.MouseEvent) => {
-    if (viewMode === 'slider' && isDraggingSlider) return;
     if (zoomLevel > 1) {
       setIsPanning(true);
       setPanStart({ x: e.clientX - panPos.x, y: e.clientY - panPos.y });
@@ -85,10 +64,6 @@ export const CircuitCanvasOverlay: React.FC<CircuitCanvasOverlayProps> = ({
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
-    if (isDraggingSlider) {
-      handleSliderMove(e.clientX);
-      return;
-    }
     if (isPanning && zoomLevel > 1) {
       setPanPos({
         x: e.clientX - panStart.x,
@@ -99,7 +74,6 @@ export const CircuitCanvasOverlay: React.FC<CircuitCanvasOverlayProps> = ({
 
   const handleMouseUp = () => {
     setIsPanning(false);
-    setIsDraggingSlider(false);
   };
 
   // SVG Annotation renderer (Constrained 100% to Image Surface)
@@ -123,7 +97,6 @@ export const CircuitCanvasOverlay: React.FC<CircuitCanvasOverlayProps> = ({
 
         {detectedComponents.map((comp) => {
           if (!comp.box) return null;
-          // Clamp coordinates safely within [0, 1000]
           const ymin = Math.max(0, Math.min(990, comp.box.ymin));
           const xmin = Math.max(0, Math.min(990, comp.box.xmin));
           const ymax = Math.max(ymin + 10, Math.min(1000, comp.box.ymax));
@@ -232,11 +205,11 @@ export const CircuitCanvasOverlay: React.FC<CircuitCanvasOverlayProps> = ({
     <div className="flex flex-col space-y-2.5">
       {/* Top Toolbar: View Modes & Zoom Controls */}
       <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-slate-900/90 border border-slate-800 rounded-xl backdrop-blur-md text-xs">
-        {/* Mode Switcher */}
+        {/* Mode Switcher (Clean 3 Modes) */}
         <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800">
           <button
             onClick={() => setViewMode('annotated')}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${
+            className={`flex items-center gap-1 px-3 py-1.5 rounded-md text-[11px] font-semibold transition-all ${
               viewMode === 'annotated'
                 ? 'bg-cyan-950 text-cyan-300 border border-cyan-700/60 shadow-sm'
                 : 'text-slate-400 hover:text-slate-200'
@@ -249,7 +222,7 @@ export const CircuitCanvasOverlay: React.FC<CircuitCanvasOverlayProps> = ({
 
           <button
             onClick={() => setViewMode('side_by_side')}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${
+            className={`flex items-center gap-1 px-3 py-1.5 rounded-md text-[11px] font-semibold transition-all ${
               viewMode === 'side_by_side'
                 ? 'bg-cyan-950 text-cyan-300 border border-cyan-700/60 shadow-sm'
                 : 'text-slate-400 hover:text-slate-200'
@@ -261,21 +234,8 @@ export const CircuitCanvasOverlay: React.FC<CircuitCanvasOverlayProps> = ({
           </button>
 
           <button
-            onClick={() => setViewMode('slider')}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${
-              viewMode === 'slider'
-                ? 'bg-cyan-950 text-cyan-300 border border-cyan-700/60 shadow-sm'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-            title="สไลเดอร์รูดเปรียบเทียบ Before/After"
-          >
-            <Sliders className="w-3.5 h-3.5 text-cyan-400" />
-            <span>สไลเดอร์รูดดู</span>
-          </button>
-
-          <button
             onClick={() => setViewMode('original')}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${
+            className={`flex items-center gap-1 px-3 py-1.5 rounded-md text-[11px] font-semibold transition-all ${
               viewMode === 'original'
                 ? 'bg-cyan-950 text-cyan-300 border border-cyan-700/60 shadow-sm'
                 : 'text-slate-400 hover:text-slate-200'
@@ -377,52 +337,7 @@ export const CircuitCanvasOverlay: React.FC<CircuitCanvasOverlayProps> = ({
           </div>
         )}
 
-        {/* MODE 2: SLIDER (Interactive Drag Before/After) */}
-        {viewMode === 'slider' && (
-          <div
-            ref={sliderContainerRef}
-            onTouchMove={handleTouchMove}
-            className="relative inline-flex items-center justify-center max-w-full overflow-hidden cursor-ew-resize rounded-xl border border-cyan-900/50"
-          >
-            {/* Base Layer: Inspected Image with Overlay */}
-            <div className="relative inline-flex items-center justify-center">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={imageSrc}
-                alt="Inspected Circuit"
-                className="block max-w-full max-h-[500px] w-auto h-auto object-contain pointer-events-none"
-              />
-              {!isAnalyzing && renderSvgOverlay()}
-            </div>
-
-            {/* Clip Layer: Original Clean Image */}
-            <div
-              className="absolute inset-0 w-full h-full overflow-hidden pointer-events-none"
-              style={{ clipPath: `polygon(0 0, ${sliderPos}% 0, ${sliderPos}% 100%, 0 100%)` }}
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={imageSrc}
-                alt="Original Circuit"
-                className="block max-w-full max-h-[500px] w-auto h-auto object-contain pointer-events-none"
-              />
-            </div>
-
-            {/* Draggable Divider Handle Line */}
-            <div
-              onMouseDown={() => setIsDraggingSlider(true)}
-              onTouchStart={() => setIsDraggingSlider(true)}
-              className="absolute top-0 bottom-0 z-30 w-0.5 bg-cyan-400 shadow-[0_0_12px_rgba(6,182,212,0.9)] cursor-ew-resize flex items-center justify-center pointer-events-auto"
-              style={{ left: `${sliderPos}%` }}
-            >
-              <div className="w-7 h-7 rounded-full bg-slate-950 border-2 border-cyan-400 flex items-center justify-center text-cyan-300 shadow-xl transform active:scale-110 transition-transform">
-                <Sliders className="w-3.5 h-3.5" />
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* MODE 3 & 4: ANNOTATED SINGLE VIEW OR ORIGINAL CLEAN VIEW */}
+        {/* MODE 2 & 3: ANNOTATED SINGLE VIEW OR ORIGINAL CLEAN VIEW */}
         {(viewMode === 'annotated' || viewMode === 'original') && (
           <div
             className="relative inline-flex items-center justify-center max-w-full transition-transform duration-75 ease-out"
