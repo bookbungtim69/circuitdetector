@@ -20,9 +20,9 @@ export async function analyzeCircuitWithGemini(
   }
 
   const systemPrompt = `
-You are a strict, expert Electronic Circuit Inspector and Electrical Engineer specializing in Arduino microcontroller circuits (specifically Arduino Nano, breadboards, LEDs, resistors, and jumper wires).
+You are an expert Electronic Circuit Inspector and Electrical Engineer specializing in Arduino microcontroller circuits (specifically Arduino Nano, breadboards, LEDs, resistors, and jumper wires).
 
-Your task is to critically analyze the provided image of a physical circuit and verify whether the Arduino Nano + LED circuit is electrically connected and correctly wired.
+Your task is to analyze the provided image with high-precision reasoning and verify whether the Arduino Nano + LED circuit is electrically connected and correctly wired.
 
 CRITICAL ELECTRICAL CONNECTIVITY RULES (Breadboard & Circuit Rules):
 1. Breadboard Continuity:
@@ -114,15 +114,17 @@ You MUST reply ONLY with a valid JSON object matching this exact structure (no m
 }
 `;
 
-  // 1. Fetch available models from user's API key dynamically
+  // Prioritize Gemini PRO models first for maximum deep reasoning accuracy
   let candidateModels: string[] = [
-    'gemini-1.5-flash-latest',
-    'gemini-1.5-flash',
-    'gemini-2.0-flash',
-    'gemini-2.0-flash-exp',
-    'gemini-1.5-flash-8b',
     'gemini-1.5-pro-latest',
-    'gemini-2.5-flash'
+    'gemini-1.5-pro',
+    'gemini-2.5-pro',
+    'gemini-1.5-pro-002',
+    'gemini-1.5-pro-001',
+    'gemini-2.5-flash',
+    'gemini-2.0-flash',
+    'gemini-1.5-flash-latest',
+    'gemini-1.5-flash'
   ];
 
   try {
@@ -135,18 +137,17 @@ You MUST reply ONLY with a valid JSON object matching this exact structure (no m
           .map((m: any) => m.name.replace('models/', ''));
         
         if (available.length > 0) {
-          // Sort to prioritize flash and newer models
-          const preferred = available.filter((m: string) => 
-            m.includes('flash') || m.includes('2.5') || m.includes('2.0') || m.includes('1.5')
-          );
-          if (preferred.length > 0) {
-            candidateModels = [...preferred, ...available];
-          }
+          // Sort with Gemini PRO models at the absolute highest priority!
+          const proModels = available.filter((m: string) => m.includes('pro'));
+          const flashModels = available.filter((m: string) => !m.includes('pro') && (m.includes('flash') || m.includes('2.5')));
+          const others = available.filter((m: string) => !m.includes('pro') && !m.includes('flash'));
+          
+          candidateModels = [...proModels, ...flashModels, ...others];
         }
       }
     }
   } catch (e) {
-    console.warn('Could not query model list, using fallback list:', e);
+    console.warn('Could not query model list, using default Gemini Pro list:', e);
   }
 
   let lastError: Error | null = null;
