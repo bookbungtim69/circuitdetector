@@ -11,6 +11,8 @@ import {
   Crosshair,
   AlertCircle,
   Sparkles,
+  Video,
+  CheckCircle2,
 } from 'lucide-react';
 import { playScanSound } from '@/lib/soundEffects';
 
@@ -19,6 +21,11 @@ interface CameraViewProps {
   isAnalyzing: boolean;
   onClear: () => void;
   currentImage: string | null;
+}
+
+interface VideoDevice {
+  deviceId: string;
+  label: string;
 }
 
 export const CameraView: React.FC<CameraViewProps> = ({
@@ -32,6 +39,8 @@ export const CameraView: React.FC<CameraViewProps> = ({
   
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment');
+  const [devices, setDevices] = useState<VideoDevice[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
   const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [isTorchOn, setIsTorchOn] = useState<boolean>(false);
@@ -49,18 +58,54 @@ export const CameraView: React.FC<CameraViewProps> = ({
     setHasTorch(false);
   }, [stream]);
 
+  // Enumerate video devices
+  const updateDeviceList = useCallback(async () => {
+    try {
+      if (!navigator.mediaDevices?.enumerateDevices) return;
+      const allDevices = await navigator.mediaDevices.enumerateDevices();
+      const videoDevs = allDevices
+        .filter((d) => d.kind === 'videoinput')
+        .map((d, index) => ({
+          deviceId: d.deviceId,
+          label: d.label || `กล้องตัวที่ ${index + 1}`,
+        }));
+      setDevices(videoDevs);
+
+      // If there's a Canon or external camera detected, auto-select it!
+      const canonCam = videoDevs.find(
+        (d) =>
+          d.label.toLowerCase().includes('canon') ||
+          d.label.toLowerCase().includes('r50') ||
+          d.label.toLowerCase().includes('eos')
+      );
+      if (canonCam && !selectedDeviceId) {
+        setSelectedDeviceId(canonCam.deviceId);
+      }
+    } catch (e) {
+      console.warn('Enumerate devices error:', e);
+    }
+  }, [selectedDeviceId]);
+
   // Start camera stream
-  const startCamera = useCallback(async () => {
+  const startCamera = useCallback(async (deviceIdToUse?: string) => {
     stopCamera();
     setCameraError(null);
 
+    const devId = deviceIdToUse || selectedDeviceId;
+
     try {
       const constraints: MediaStreamConstraints = {
-        video: {
-          facingMode: { ideal: facingMode },
-          width: { ideal: 1920, min: 640 },
-          height: { ideal: 1080, min: 480 },
-        },
+        video: devId
+          ? {
+              deviceId: { exact: devId },
+              width: { ideal: 1920, min: 1280 },
+              height: { ideal: 1080, min: 720 },
+            }
+          : {
+              facingMode: { ideal: facingMode },
+              width: { ideal: 1920, min: 1280 },
+              height: { ideal: 1080, min: 720 },
+            },
         audio: false,
       };
 
@@ -79,18 +124,36 @@ export const CameraView: React.FC<CameraViewProps> = ({
       if (capabilities && capabilities.torch) {
         setHasTorch(true);
       }
+
+      // Update devices labels after permission granted
+      updateDeviceList();
     } catch (err: any) {
       console.error('Camera access error:', err);
       let message = 'ไม่สามารถเข้าถึงกล้องได้ กรุณาอนุญาตสิทธิ์การเข้าถึงกล้องในเบราว์เซอร์';
       if (err.name === 'NotAllowedError') {
-        message = 'การเข้าถึงกล้องถูกปฏิเสธ (Permission Denied) กรุณาอนุญาตสิทธิ์ใช้งานกล้อง';
+        message = 'การเข้าถึงกล้องถูกปฏิเสธ (Permission Denied) กรุณาอนุญาตสิทธิ์ใช้งานกล้องในเบราว์เซอร์';
       } else if (err.name === 'NotFoundError') {
-        message = 'ไม่พบอุปกรณ์กล้องในเครื่องนี้';
+        message = 'ไม่พบอุปกรณ์กล้อง หรือกล้องถูกโปรแกรมอื่นใช้งานอยู่';
+      } else if (err.name === 'OverconstrainedError') {
+        // Fallback to basic constraints if resolution too high
+        try {
+          const fallbackStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+          setStream(fallbackStream);
+          setIsCameraActive(true);
+          if (videoRef.current) {
+            videoRef.current.srcObject = fallbackStream;
+            await videoRef.current.play();
+          }
+          updateDeviceList();
+          return;
+        } catch (e) {
+          message = 'ไม่สามารถเปิดกล้องด้วยความละเอียดที่กำหนดได้';
+        }
       }
       setCameraError(message);
       setIsCameraActive(false);
     }
-  }, [facingMode, stopCamera]);
+  }, [facingMode, selectedDeviceId, stopCamera, updateDeviceList]);
 
   // Switch facing mode (Front / Back)
   const toggleFacingMode = () => {
@@ -103,6 +166,14 @@ export const CameraView: React.FC<CameraViewProps> = ({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [facingMode]);
+
+  // Handle camera device selection
+  const handleDeviceChange = (newDeviceId: string) => {
+    setSelectedDeviceId(newDeviceId);
+    if (isCameraActive) {
+      startCamera(newDeviceId);
+    }
+  };
 
   // Toggle Torch
   const toggleTorch = async () => {
@@ -125,14 +196,14 @@ export const CameraView: React.FC<CameraViewProps> = ({
 
     const video = videoRef.current;
     const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth || 1280;
-    canvas.height = video.videoHeight || 720;
+    canvas.width = video.videoWidth || 1920;
+    canvas.height = video.videoHeight || 1080;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
     // Draw video frame to canvas
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const base64 = canvas.toDataURL('image/jpeg', 0.92);
+    const base64 = canvas.toDataURL('image/jpeg', 0.95);
 
     stopCamera();
     onCaptureImage(base64);
@@ -168,6 +239,11 @@ export const CameraView: React.FC<CameraViewProps> = ({
       handleFileUpload(e.dataTransfer.files[0]);
     }
   };
+
+  const selectedDeviceObj = devices.find((d) => d.deviceId === selectedDeviceId);
+  const isCanon = selectedDeviceObj?.label.toLowerCase().includes('canon') || 
+                  selectedDeviceObj?.label.toLowerCase().includes('r50') ||
+                  selectedDeviceObj?.label.toLowerCase().includes('eos');
 
   return (
     <div className="relative flex flex-col items-center w-full bg-slate-900/90 rounded-2xl border border-cyan-900/60 p-4 sm:p-5 shadow-xl backdrop-blur-md">
@@ -207,15 +283,21 @@ export const CameraView: React.FC<CameraViewProps> = ({
             />
 
             {/* AR Alignment Guide HUD */}
-            <div className="absolute inset-0 pointer-events-none flex flex-col justify-between p-6">
-              {/* Top status tag */}
-              <div className="flex justify-between items-center">
+            <div className="absolute inset-0 pointer-events-none flex flex-col justify-between p-4 sm:p-6">
+              {/* Top status tag & Camera label */}
+              <div className="flex justify-between items-center gap-2">
                 <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-950/80 border border-cyan-500/60 text-cyan-400 text-xs font-mono backdrop-blur-sm">
                   <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
-                  <span>LIVE CAMERA FEED</span>
+                  <span>LIVE FEED</span>
+                  {isCanon && (
+                    <span className="ml-1 px-1.5 py-0.2 bg-emerald-950 text-emerald-300 border border-emerald-700 rounded text-[10px] font-bold">
+                      Canon EOS R50 (4K/HD)
+                    </span>
+                  )}
                 </div>
-                <div className="text-[11px] font-mono text-cyan-300/80 bg-slate-950/80 px-2.5 py-1 rounded-lg border border-slate-800">
-                  {facingMode === 'environment' ? '📷 กล้องหลัง' : '🤳 กล้องหน้า'}
+
+                <div className="text-[11px] font-mono text-cyan-300/90 bg-slate-950/80 px-2.5 py-1 rounded-lg border border-slate-800 backdrop-blur-sm truncate max-w-[200px]">
+                  📷 {selectedDeviceObj?.label || (facingMode === 'environment' ? 'กล้องหลัง' : 'กล้องหน้า')}
                 </div>
               </div>
 
@@ -251,10 +333,10 @@ export const CameraView: React.FC<CameraViewProps> = ({
 
             <div className="space-y-1 max-w-sm">
               <h3 className="text-base font-bold text-slate-100">
-                เริ่มตรวจสอบวงจรผ่านกล้องหรืออัปโหลดภาพ
+                สตรีมภาพจากกล้อง Canon R50 หรือ Webcam
               </h3>
               <p className="text-xs text-slate-400">
-                ส่องกล้องไปยังบอร์ด Arduino Nano, Breadboard, ตัวต้านทาน และ LED หรือลากไฟล์ภาพมาวางที่นี่
+                รองรับการตรวจจับผ่านกล้อง Canon EOS R50 (Type-C UVC), เว็บบอร์ด และสมาร์ตโฟน
               </p>
             </div>
 
@@ -267,7 +349,7 @@ export const CameraView: React.FC<CameraViewProps> = ({
 
             <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
               <button
-                onClick={startCamera}
+                onClick={() => startCamera()}
                 className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 font-bold text-xs shadow-lg shadow-cyan-500/25 transition-all transform hover:scale-105 active:scale-95"
               >
                 <Camera className="w-4 h-4 text-slate-950" />
@@ -286,20 +368,42 @@ export const CameraView: React.FC<CameraViewProps> = ({
         )}
       </div>
 
-      {/* Control Buttons Bar */}
-      <div className="w-full mt-4 flex flex-wrap items-center justify-between gap-3">
-        {/* Left Side: Switch Camera / Torch / Retake */}
-        <div className="flex items-center gap-2">
+      {/* Control Buttons & Device Selector Bar */}
+      <div className="w-full mt-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+        {/* Left Side: Camera Selector Dropdown / Switch Camera */}
+        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+          {devices.length > 1 && (
+            <div className="flex items-center gap-1.5 bg-slate-950 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-slate-200">
+              <Video className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+              <select
+                value={selectedDeviceId}
+                onChange={(e) => handleDeviceChange(e.target.value)}
+                className="bg-transparent text-slate-200 text-xs focus:outline-none cursor-pointer max-w-[180px] sm:max-w-[220px] truncate"
+              >
+                <option value="" className="bg-slate-900 text-slate-200">
+                  เลือกอุปกรณ์กล้อง...
+                </option>
+                {devices.map((d) => (
+                  <option key={d.deviceId} value={d.deviceId} className="bg-slate-900 text-slate-200">
+                    {d.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           {isCameraActive && (
             <>
-              <button
-                onClick={toggleFacingMode}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 hover:border-cyan-500 text-xs text-slate-200 transition-colors"
-                title="สลับกล้องหน้า/กล้องหลัง"
-              >
-                <SwitchCamera className="w-4 h-4 text-cyan-400" />
-                <span className="hidden sm:inline">สลับกล้อง</span>
-              </button>
+              {devices.length <= 1 && (
+                <button
+                  onClick={toggleFacingMode}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 hover:border-cyan-500 text-xs text-slate-200 transition-colors"
+                  title="สลับกล้องหน้า/กล้องหลัง"
+                >
+                  <SwitchCamera className="w-4 h-4 text-cyan-400" />
+                  <span className="hidden sm:inline">สลับกล้อง</span>
+                </button>
+              )}
 
               {hasTorch && (
                 <button
@@ -343,12 +447,12 @@ export const CameraView: React.FC<CameraViewProps> = ({
         </div>
 
         {/* Right Side: Primary Actions */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
           {isCameraActive && !currentImage && (
             <button
               onClick={captureFrame}
               disabled={isAnalyzing}
-              className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-cyan-400 to-teal-400 hover:from-cyan-300 hover:to-teal-300 text-slate-950 font-bold text-xs shadow-lg shadow-cyan-500/30 transition-all transform hover:scale-105 active:scale-95 disabled:opacity-50"
+              className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-cyan-400 to-teal-400 hover:from-cyan-300 hover:to-teal-300 text-slate-950 font-bold text-xs shadow-lg shadow-cyan-500/30 transition-all transform hover:scale-105 active:scale-95 disabled:opacity-50"
             >
               <Crosshair className="w-4 h-4 text-slate-950" />
               <span>จับภาพ & ตรวจสอบวงจร (Capture)</span>
