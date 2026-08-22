@@ -1,26 +1,23 @@
 'use client';
 
 import React from 'react';
-import { Cpu, BookOpen, Key, Github, Sparkles, HelpCircle } from 'lucide-react';
+import Link from 'next/link';
+import { Cpu, BookOpen, Lock, Github, Sparkles, ShieldCheck } from 'lucide-react';
 
 interface NavbarProps {
   onOpenSchematic: () => void;
   onOpenSamples: () => void;
-  onOpenApiKey: () => void;
-  hasCustomApiKey: boolean;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
   onOpenSchematic,
   onOpenSamples,
-  onOpenApiKey,
-  hasCustomApiKey,
 }) => {
   return (
     <header className="sticky top-0 z-40 w-full border-b border-cyan-900/40 bg-slate-950/80 backdrop-blur-md">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
         {/* Logo & Brand */}
-        <div className="flex items-center space-x-3">
+        <Link href="/" className="flex items-center space-x-3 cursor-pointer">
           <div className="relative flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-600 to-blue-600 shadow-lg shadow-cyan-500/20 text-white font-bold">
             <Cpu className="w-6 h-6 animate-pulse text-cyan-200" />
             <div className="absolute -bottom-1 -right-1 w-3.5 h-3.5 bg-emerald-500 rounded-full border-2 border-slate-950"></div>
@@ -38,7 +35,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               Arduino Nano + LED Circuit Inspection System
             </p>
           </div>
-        </div>
+        </Link>
 
         {/* Action Buttons */}
         <div className="flex items-center space-x-2 sm:space-x-3">
@@ -64,22 +61,16 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span className="md:hidden">ผังวงจร</span>
           </button>
 
-          {/* API Key Modal Button */}
-          <button
-            onClick={onOpenApiKey}
-            className={`flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-all ${
-              hasCustomApiKey
-                ? 'bg-emerald-950/60 text-emerald-300 border-emerald-700/70 hover:bg-emerald-900/60'
-                : 'bg-slate-900/90 text-amber-300 border-amber-800/60 hover:bg-amber-950/60'
-            }`}
-            title="ตั้งค่า Gemini API Key"
+          {/* Admin Backend Link (Protected with PIN 0000) */}
+          <Link
+            href="/admin"
+            className="flex items-center space-x-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-gradient-to-r from-cyan-950 to-slate-900 text-cyan-300 border border-cyan-700/60 hover:border-cyan-400 hover:text-cyan-200 transition-all shadow-sm"
+            title="เข้าสู่ระบบหลังบ้าน (จัดการ API Key และดูประวัติการตรวจ)"
           >
-            <Key className="w-3.5 h-3.5" />
-            <span className="hidden lg:inline">
-              {hasCustomApiKey ? 'API Key: ใช้งานอยู่' : 'ตั้งค่า API Key'}
-            </span>
-            <span className="lg:hidden">API</span>
-          </button>
+            <Lock className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="hidden sm:inline">ระบบหลังบ้าน (Admin)</span>
+            <span className="sm:hidden">หลังบ้าน</span>
+          </Link>
 
           {/* GitHub Repo */}
           <a
