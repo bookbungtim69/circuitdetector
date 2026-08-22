@@ -78,8 +78,13 @@ export default function Home() {
           playErrorSound();
         }
       } else {
-        const errText = json.error || 'เกิดข้อผิดพลาดในการวิเคราะห์';
-        setErrorMessage(errText);
+        if (json.errorCode === 'GEMINI_API_KEY_REQUIRED') {
+          setIsApiKeyOpen(true);
+          setErrorMessage('กรุณาใส่ Gemini API Key ด้านล่างเพื่อให้ AI Vision เริ่มสแกนและตรวจสอบวงจรจริงของคุณ');
+        } else {
+          const errText = json.error || json.details || 'เกิดข้อผิดพลาดในการวิเคราะห์';
+          setErrorMessage(errText);
+        }
         playErrorSound();
       }
     } catch (err: any) {
