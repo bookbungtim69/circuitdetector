@@ -10,9 +10,8 @@ import {
   SwitchCamera,
   Crosshair,
   AlertCircle,
-  Sparkles,
   Video,
-  CheckCircle2,
+  Info,
 } from 'lucide-react';
 import { playScanSound } from '@/lib/soundEffects';
 
@@ -46,14 +45,25 @@ export const CameraView: React.FC<CameraViewProps> = ({
   const [isTorchOn, setIsTorchOn] = useState<boolean>(false);
   const [hasTorch, setHasTorch] = useState<boolean>(false);
   const [isDragging, setIsDragging] = useState<boolean>(false);
+  const [isVideoPlaying, setIsVideoPlaying] = useState<boolean>(false);
 
   // Stop camera tracks cleanly
   const stopCamera = useCallback(() => {
     if (stream) {
-      stream.getTracks().forEach((track) => track.stop());
+      stream.getTracks().forEach((track) => {
+        try {
+          track.stop();
+        } catch (e) {
+          console.warn('Track stop error', e);
+        }
+      });
       setStream(null);
     }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
     setIsCameraActive(false);
+    setIsVideoPlaying(false);
     setIsTorchOn(false);
     setHasTorch(false);
   }, [stream]);
@@ -67,95 +77,152 @@ export const CameraView: React.FC<CameraViewProps> = ({
         .filter((d) => d.kind === 'videoinput')
         .map((d, index) => ({
           deviceId: d.deviceId,
-          label: d.label || `กล้องตัวที่ ${index + 1}`,
+          label: d.label || `กล้อง ${index + 1} (${d.deviceId.slice(0, 5)}...)`,
         }));
       setDevices(videoDevs);
 
-      // If there's a Canon or external camera detected, auto-select it!
+      // If there's a Canon or external camera detected, prioritize selecting it!
       const canonCam = videoDevs.find(
         (d) =>
           d.label.toLowerCase().includes('canon') ||
           d.label.toLowerCase().includes('r50') ||
-          d.label.toLowerCase().includes('eos')
+          d.label.toLowerCase().includes('eos') ||
+          d.label.toLowerCase().includes('uvc')
       );
       if (canonCam && !selectedDeviceId) {
         setSelectedDeviceId(canonCam.deviceId);
+      } else if (videoDevs.length > 0 && !selectedDeviceId) {
+        setSelectedDeviceId(videoDevs[0].deviceId);
       }
     } catch (e) {
       console.warn('Enumerate devices error:', e);
     }
   }, [selectedDeviceId]);
 
-  // Start camera stream
+  // Initial device list check
+  useEffect(() => {
+    updateDeviceList();
+  }, [updateDeviceList]);
+
+  // Start camera stream with robust fallback
   const startCamera = useCallback(async (deviceIdToUse?: string) => {
     stopCamera();
     setCameraError(null);
+    setIsVideoPlaying(false);
 
-    const devId = deviceIdToUse || selectedDeviceId;
+    const targetDevId = deviceIdToUse || selectedDeviceId;
 
-    try {
-      const constraints: MediaStreamConstraints = {
-        video: devId
-          ? {
-              deviceId: { exact: devId },
-              width: { ideal: 1920, min: 1280 },
-              height: { ideal: 1080, min: 720 },
-            }
-          : {
-              facingMode: { ideal: facingMode },
-              width: { ideal: 1920, min: 1280 },
-              height: { ideal: 1080, min: 720 },
+    // Strategy 1: Target Device ID or ideal constraints
+    const attemptConstraints: MediaStreamConstraints[] = [
+      // Attempt 1: Target device with ideal 1080p
+      targetDevId
+        ? {
+            video: {
+              deviceId: { exact: targetDevId },
+              width: { ideal: 1920 },
+              height: { ideal: 1080 },
             },
+            audio: false,
+          }
+        : {
+            video: {
+              facingMode: { ideal: facingMode },
+              width: { ideal: 1920 },
+              height: { ideal: 1080 },
+            },
+            audio: false,
+          },
+      // Attempt 2: Target device with default parameters
+      targetDevId
+        ? {
+            video: { deviceId: { exact: targetDevId } },
+            audio: false,
+          }
+        : {
+            video: { facingMode: { ideal: facingMode } },
+            audio: false,
+          },
+      // Attempt 3: General video stream
+      {
+        video: true,
         audio: false,
+      },
+    ];
+
+    let mediaStream: MediaStream | null = null;
+    let lastErr: any = null;
+
+    for (const constraints of attemptConstraints) {
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+        if (mediaStream) break;
+      } catch (err: any) {
+        lastErr = err;
+        console.warn('getUserMedia attempt failed, trying fallback...', err);
+      }
+    }
+
+    if (!mediaStream) {
+      console.error('All camera attempts failed:', lastErr);
+      let message = 'ไม่สามารถดึงภาพจากกล้องได้';
+      if (lastErr?.name === 'NotReadableError' || lastErr?.name === 'TrackStartError') {
+        message = 'กล้องกำลังถูกโปรแกรมอื่นใช้งานอยู่ (เช่น โปรแกรมกล้อง Windows, OBS, EOS Utility, หรือ Zoom) กรุณาปิดโปรแกรมเหล่านั้นก่อน แล้วกด "ลองใหม่อีกครั้ง"';
+      } else if (lastErr?.name === 'NotAllowedError') {
+        message = 'เบราว์เซอร์ถูกบล็อกการเข้าถึงกล้อง กรุณากดไอคอนแม่กุญแจที่แถบ URL เพื่ออนุญาตให้ใช้งานกล้อง';
+      } else if (lastErr?.name === 'NotFoundError') {
+        message = 'ไม่พบอุปกรณ์กล้อง กรุณาตรวจสอบสาย Type-C หรือเปิดเครื่องกล้อง Canon R50';
+      } else {
+        message = `เกิดข้อผิดพลาด: ${lastErr?.message || 'ไม่สามารถเปิดกล้องได้'}`;
+      }
+      setCameraError(message);
+      setIsCameraActive(false);
+      return;
+    }
+
+    setStream(mediaStream);
+    setIsCameraActive(true);
+
+    if (videoRef.current) {
+      const video = videoRef.current;
+      video.srcObject = mediaStream;
+      
+      video.onloadedmetadata = () => {
+        video
+          .play()
+          .then(() => setIsVideoPlaying(true))
+          .catch((e) => {
+            console.warn('Video play onloadedmetadata failed:', e);
+            // Retry play on user interaction
+          });
       };
 
-      const mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
-      setStream(mediaStream);
-      setIsCameraActive(true);
+      // Direct play call
+      video
+        .play()
+        .then(() => setIsVideoPlaying(true))
+        .catch((e) => console.warn('Direct video play error:', e));
+    }
 
-      if (videoRef.current) {
-        videoRef.current.srcObject = mediaStream;
-        await videoRef.current.play();
-      }
-
-      // Check flashlight support
-      const track = mediaStream.getVideoTracks()[0];
+    // Check flashlight support
+    const track = mediaStream.getVideoTracks()[0];
+    if (track) {
       const capabilities = track.getCapabilities ? (track.getCapabilities() as any) : {};
       if (capabilities && capabilities.torch) {
         setHasTorch(true);
       }
-
-      // Update devices labels after permission granted
-      updateDeviceList();
-    } catch (err: any) {
-      console.error('Camera access error:', err);
-      let message = 'ไม่สามารถเข้าถึงกล้องได้ กรุณาอนุญาตสิทธิ์การเข้าถึงกล้องในเบราว์เซอร์';
-      if (err.name === 'NotAllowedError') {
-        message = 'การเข้าถึงกล้องถูกปฏิเสธ (Permission Denied) กรุณาอนุญาตสิทธิ์ใช้งานกล้องในเบราว์เซอร์';
-      } else if (err.name === 'NotFoundError') {
-        message = 'ไม่พบอุปกรณ์กล้อง หรือกล้องถูกโปรแกรมอื่นใช้งานอยู่';
-      } else if (err.name === 'OverconstrainedError') {
-        // Fallback to basic constraints if resolution too high
-        try {
-          const fallbackStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-          setStream(fallbackStream);
-          setIsCameraActive(true);
-          if (videoRef.current) {
-            videoRef.current.srcObject = fallbackStream;
-            await videoRef.current.play();
-          }
-          updateDeviceList();
-          return;
-        } catch (e) {
-          message = 'ไม่สามารถเปิดกล้องด้วยความละเอียดที่กำหนดได้';
-        }
-      }
-      setCameraError(message);
-      setIsCameraActive(false);
     }
+
+    // Refresh devices list
+    updateDeviceList();
   }, [facingMode, selectedDeviceId, stopCamera, updateDeviceList]);
 
-  // Switch facing mode (Front / Back)
+  // Handle camera device selection
+  const handleDeviceChange = (newDeviceId: string) => {
+    setSelectedDeviceId(newDeviceId);
+    startCamera(newDeviceId);
+  };
+
+  // Toggle facing mode (Mobile)
   const toggleFacingMode = () => {
     setFacingMode((prev) => (prev === 'environment' ? 'user' : 'environment'));
   };
@@ -166,14 +233,6 @@ export const CameraView: React.FC<CameraViewProps> = ({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [facingMode]);
-
-  // Handle camera device selection
-  const handleDeviceChange = (newDeviceId: string) => {
-    setSelectedDeviceId(newDeviceId);
-    if (isCameraActive) {
-      startCamera(newDeviceId);
-    }
-  };
 
   // Toggle Torch
   const toggleTorch = async () => {
@@ -241,9 +300,6 @@ export const CameraView: React.FC<CameraViewProps> = ({
   };
 
   const selectedDeviceObj = devices.find((d) => d.deviceId === selectedDeviceId);
-  const isCanon = selectedDeviceObj?.label.toLowerCase().includes('canon') || 
-                  selectedDeviceObj?.label.toLowerCase().includes('r50') ||
-                  selectedDeviceObj?.label.toLowerCase().includes('eos');
 
   return (
     <div className="relative flex flex-col items-center w-full bg-slate-900/90 rounded-2xl border border-cyan-900/60 p-4 sm:p-5 shadow-xl backdrop-blur-md">
@@ -289,11 +345,6 @@ export const CameraView: React.FC<CameraViewProps> = ({
                 <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-950/80 border border-cyan-500/60 text-cyan-400 text-xs font-mono backdrop-blur-sm">
                   <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
                   <span>LIVE FEED</span>
-                  {isCanon && (
-                    <span className="ml-1 px-1.5 py-0.2 bg-emerald-950 text-emerald-300 border border-emerald-700 rounded text-[10px] font-bold">
-                      Canon EOS R50 (4K/HD)
-                    </span>
-                  )}
                 </div>
 
                 <div className="text-[11px] font-mono text-cyan-300/90 bg-slate-950/80 px-2.5 py-1 rounded-lg border border-slate-800 backdrop-blur-sm truncate max-w-[200px]">
@@ -333,17 +384,26 @@ export const CameraView: React.FC<CameraViewProps> = ({
 
             <div className="space-y-1 max-w-sm">
               <h3 className="text-base font-bold text-slate-100">
-                สตรีมภาพจากกล้อง Canon R50 หรือ Webcam
+                สตรีมภาพจากกล้อง Live Camera หรือ Webcam
               </h3>
               <p className="text-xs text-slate-400">
-                รองรับการตรวจจับผ่านกล้อง Canon EOS R50 (Type-C UVC), เว็บบอร์ด และสมาร์ตโฟน
+                รองรับการตรวจจับผ่านกล้องถ่ายรูป, กล้องภายนอก (USB/Type-C), เว็บแคม และสมาร์ตโฟน
               </p>
             </div>
 
             {cameraError && (
-              <div className="flex items-center gap-2 p-3 bg-red-950/70 border border-red-800 rounded-xl text-red-300 text-xs text-left max-w-md">
-                <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
-                <span>{cameraError}</span>
+              <div className="flex flex-col gap-2 p-3.5 bg-red-950/80 border border-red-800 rounded-xl text-red-200 text-xs text-left max-w-md">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-red-400 mt-0.5" />
+                  <span>{cameraError}</span>
+                </div>
+                <div className="p-2 bg-slate-950/80 rounded-lg text-[11px] text-slate-300 space-y-1 border border-slate-800">
+                  <p className="font-semibold text-amber-300 flex items-center gap-1">
+                    <Info className="w-3.5 h-3.5" /> วิธีแก้ปัญหาเมื่อภาพไม่ขึ้น:
+                  </p>
+                  <p>1. ปิดโปรแกรมอื่นที่เปิดกล้องค้างไว้ (เช่น โปรแกรมกล้อง, OBS, หรือโปรแกรมประชุม)</p>
+                  <p>2. ตรวจสอบว่าเลือกอุปกรณ์กล้องตรงกับกล้องที่ต้องการในเมนูด้านล่าง</p>
+                </div>
               </div>
             )}
 
@@ -372,7 +432,7 @@ export const CameraView: React.FC<CameraViewProps> = ({
       <div className="w-full mt-4 flex flex-col sm:flex-row items-center justify-between gap-3">
         {/* Left Side: Camera Selector Dropdown / Switch Camera */}
         <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-          {devices.length > 1 && (
+          {devices.length > 0 && (
             <div className="flex items-center gap-1.5 bg-slate-950 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-slate-200">
               <Video className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
               <select
