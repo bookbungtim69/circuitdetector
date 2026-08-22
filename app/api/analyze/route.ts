@@ -27,13 +27,15 @@ export async function POST(req: NextRequest) {
     const effectiveKey = apiKey || req.headers.get('x-gemini-key') || process.env.GEMINI_API_KEY;
 
     if (!effectiveKey) {
-      // Fallback: If no API key is set yet, we provide intelligent default inspection response
-      return NextResponse.json({
-        success: true,
-        source: 'local_heuristic',
-        warning: 'ยังไม่ได้ตั้งค่า GEMINI_API_KEY ในระบบ (สามารถกดปุ่ม "ตั้งค่า API Key" ด้านบนเพื่อใส่คีย์ของคุณ หรือดูผลทดสอบจากตัวอย่างได้)',
-        data: SAMPLE_PRESETS.correct.result,
-      });
+      return NextResponse.json(
+        {
+          success: false,
+          errorCode: 'GEMINI_API_KEY_REQUIRED',
+          error: 'ยังไม่ได้ตั้งค่า Gemini API Key สำหรับการวิเคราะห์ภาพจริง',
+          details: 'กรุณากดปุ่ม "ตั้งค่า API Key" ด้านบนเพื่อใส่คีย์ของคุณ หรือกำหนด GEMINI_API_KEY ใน Vercel',
+        },
+        { status: 400 }
+      );
     }
 
     try {
@@ -49,7 +51,7 @@ export async function POST(req: NextRequest) {
         {
           success: false,
           error: aiError?.message || 'เกิดข้อผิดพลาดในการวิเคราะห์ด้วย AI Vision',
-          details: 'กรุณาตรวจสอบ API Key หรือลองถ่ายรูปวงจรในมุมมองที่ชัดเจนยิ่งขึ้น',
+          details: 'กรุณาตรวจสอบว่า API Key ถูกต้อง หรือลองถ่ายรูปวงจรให้มีแสงสว่างและเห็นแถว Breadboard ชัดเจนยิ่งขึ้น',
         },
         { status: 500 }
       );
