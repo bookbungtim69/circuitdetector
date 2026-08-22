@@ -13,7 +13,6 @@ import {
   Sliders,
   Image as ImageIcon,
   Sparkles,
-  Eye,
 } from 'lucide-react';
 
 interface CircuitCanvasOverlayProps {
@@ -103,7 +102,7 @@ export const CircuitCanvasOverlay: React.FC<CircuitCanvasOverlayProps> = ({
     setIsDraggingSlider(false);
   };
 
-  // SVG Annotation renderer
+  // SVG Annotation renderer (Constrained 100% to Image Surface)
   const renderSvgOverlay = () => {
     return (
       <svg
@@ -124,9 +123,13 @@ export const CircuitCanvasOverlay: React.FC<CircuitCanvasOverlayProps> = ({
 
         {detectedComponents.map((comp) => {
           if (!comp.box) return null;
-          const { ymin, xmin, ymax, xmax } = comp.box;
-          const width = Math.max(16, xmax - xmin);
-          const height = Math.max(16, ymax - ymin);
+          // Clamp coordinates safely within [0, 1000]
+          const ymin = Math.max(0, Math.min(990, comp.box.ymin));
+          const xmin = Math.max(0, Math.min(990, comp.box.xmin));
+          const ymax = Math.max(ymin + 10, Math.min(1000, comp.box.ymax));
+          const xmax = Math.max(xmin + 10, Math.min(1000, comp.box.xmax));
+          const width = xmax - xmin;
+          const height = ymax - ymin;
           const isHovered = activeId === comp.id;
 
           let strokeColor = '#10b981'; // green for ok
@@ -137,13 +140,13 @@ export const CircuitCanvasOverlay: React.FC<CircuitCanvasOverlayProps> = ({
 
           if (comp.status === 'error') {
             strokeColor = '#ef4444'; // red for error
-            fillColor = 'rgba(239, 68, 68, 0.12)';
+            fillColor = 'rgba(239, 68, 68, 0.14)';
             badgeBg = '#7f1d1d';
             badgeTextColor = '#fca5a5';
             symbol = '✕';
           } else if (comp.status === 'warning') {
             strokeColor = '#f59e0b'; // amber
-            fillColor = 'rgba(245, 158, 11, 0.1)';
+            fillColor = 'rgba(245, 158, 11, 0.12)';
             badgeBg = '#78350f';
             badgeTextColor = '#fcd34d';
             symbol = '⚠';
@@ -163,14 +166,14 @@ export const CircuitCanvasOverlay: React.FC<CircuitCanvasOverlayProps> = ({
               onMouseLeave={() => setHoveredId(null)}
               onClick={() => onSelectComponent(selectedComponentId === comp.id ? null : comp.id)}
             >
-              {/* Thin, Sleek Glowing Rectangle */}
+              {/* Sleek Box Outline */}
               <rect
                 x={xmin}
                 y={ymin}
                 width={width}
                 height={height}
                 rx="6"
-                fill={isHovered ? fillColor.replace('0.08', '0.2').replace('0.12', '0.25') : fillColor}
+                fill={isHovered ? fillColor.replace('0.08', '0.22').replace('0.14', '0.28') : fillColor}
                 stroke={strokeColor}
                 strokeWidth={isHovered ? '3.5' : '2'}
                 strokeDasharray={comp.status === 'error' ? '6 4' : undefined}
@@ -180,38 +183,38 @@ export const CircuitCanvasOverlay: React.FC<CircuitCanvasOverlayProps> = ({
 
               {/* Corner Crosshair Accents */}
               <path
-                d={`M ${xmin} ${ymin + 12} L ${xmin} ${ymin} L ${xmin + 12} ${ymin}`}
+                d={`M ${xmin} ${ymin + 10} L ${xmin} ${ymin} L ${xmin + 10} ${ymin}`}
                 fill="none"
                 stroke={strokeColor}
                 strokeWidth="2.5"
               />
               <path
-                d={`M ${xmax - 12} ${ymin} L ${xmax} ${ymin} L ${xmax} ${ymin + 12}`}
+                d={`M ${xmax - 10} ${ymin} L ${xmax} ${ymin} L ${xmax} ${ymin + 10}`}
                 fill="none"
                 stroke={strokeColor}
                 strokeWidth="2.5"
               />
               <path
-                d={`M ${xmin} ${ymax - 12} L ${xmin} ${ymax} L ${xmin + 12} ${ymax}`}
+                d={`M ${xmin} ${ymax - 10} L ${xmin} ${ymax} L ${xmin + 10} ${ymax}`}
                 fill="none"
                 stroke={strokeColor}
                 strokeWidth="2.5"
               />
               <path
-                d={`M ${xmax - 12} ${ymax} L ${xmax} ${ymax} L ${xmax - 12} ${ymax}`}
+                d={`M ${xmax - 10} ${ymax} L ${xmax} ${ymax} L ${xmax - 10} ${ymax}`}
                 fill="none"
                 stroke={strokeColor}
                 strokeWidth="2.5"
               />
 
-              {/* Minimal Circle Pin Point (Never blocks circuit components) */}
-              <g transform={`translate(${xmin}, ${ymin})`}>
-                <circle cx="0" cy="0" r="9" fill={badgeBg} stroke={strokeColor} strokeWidth="1.5" />
+              {/* Minimal Pin Dot Badge */}
+              <g transform={`translate(${xmin + 8}, ${ymin + 8})`}>
+                <circle cx="0" cy="0" r="8" fill={badgeBg} stroke={strokeColor} strokeWidth="1.5" />
                 <text
                   x="0"
-                  y="3.5"
+                  y="3"
                   fill={badgeTextColor}
-                  fontSize="10"
+                  fontSize="9"
                   fontWeight="bold"
                   textAnchor="middle"
                 >
@@ -323,37 +326,41 @@ export const CircuitCanvasOverlay: React.FC<CircuitCanvasOverlayProps> = ({
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
-        className={`relative w-full min-h-[380px] max-h-[560px] bg-slate-950 overflow-hidden rounded-2xl border border-slate-800 select-none ${
+        className={`relative w-full min-h-[380px] max-h-[560px] bg-slate-950 overflow-hidden rounded-2xl border border-slate-800 flex items-center justify-center p-2 select-none ${
           zoomLevel > 1 ? (isPanning ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-default'
         }`}
       >
         {/* MODE 1: SIDE-BY-SIDE (Split Screen 2 Columns) */}
         {viewMode === 'side_by_side' && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 h-full p-2">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 w-full h-full items-center justify-center">
             {/* Left Box: Original Image */}
-            <div className="relative w-full h-[260px] md:h-[480px] bg-slate-900/50 rounded-xl overflow-hidden border border-slate-800 flex items-center justify-center">
-              <div className="absolute top-2 left-2 z-20 px-2.5 py-0.5 rounded-md bg-slate-950/85 text-slate-300 border border-slate-700 text-[10px] font-bold backdrop-blur-sm">
-                📷 ภาพถ่ายต้นฉบับ (Original)
+            <div className="relative w-full flex flex-col items-center justify-center bg-slate-900/40 p-2 rounded-xl border border-slate-800">
+              <div className="w-full flex justify-between items-center mb-1.5 px-1">
+                <span className="text-[10px] font-bold text-slate-400">📷 ภาพต้นฉบับ (Original)</span>
               </div>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={imageSrc}
-                alt="Original Circuit"
-                className="w-full h-full object-contain pointer-events-none"
-                style={{
-                  transform: `scale(${zoomLevel}) translate(${panPos.x / zoomLevel}px, ${panPos.y / zoomLevel}px)`,
-                }}
-              />
+              <div className="relative inline-flex items-center justify-center max-w-full">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={imageSrc}
+                  alt="Original Circuit"
+                  className="block max-w-full max-h-[460px] w-auto h-auto object-contain rounded-lg pointer-events-none"
+                  style={{
+                    transform: `scale(${zoomLevel}) translate(${panPos.x / zoomLevel}px, ${panPos.y / zoomLevel}px)`,
+                  }}
+                />
+              </div>
             </div>
 
             {/* Right Box: Inspected Image with AI Overlay */}
-            <div className="relative w-full h-[260px] md:h-[480px] bg-slate-900/50 rounded-xl overflow-hidden border border-cyan-900/60 flex items-center justify-center">
-              <div className="absolute top-2 left-2 z-20 px-2.5 py-0.5 rounded-md bg-slate-950/85 text-cyan-300 border border-cyan-700/60 text-[10px] font-bold backdrop-blur-sm flex items-center gap-1">
-                <Sparkles className="w-3 h-3 text-cyan-400" />
-                <span>ภาพตรวจเช็ควงจร (AI Vision)</span>
+            <div className="relative w-full flex flex-col items-center justify-center bg-slate-900/40 p-2 rounded-xl border border-cyan-900/50">
+              <div className="w-full flex justify-between items-center mb-1.5 px-1">
+                <span className="text-[10px] font-bold text-cyan-300 flex items-center gap-1">
+                  <Sparkles className="w-3 h-3 text-cyan-400" />
+                  ภาพตรวจเช็ควงจร (AI Vision)
+                </span>
               </div>
               <div
-                className="relative w-full h-full flex items-center justify-center"
+                className="relative inline-flex items-center justify-center max-w-full"
                 style={{
                   transform: `scale(${zoomLevel}) translate(${panPos.x / zoomLevel}px, ${panPos.y / zoomLevel}px)`,
                 }}
@@ -362,7 +369,7 @@ export const CircuitCanvasOverlay: React.FC<CircuitCanvasOverlayProps> = ({
                 <img
                   src={imageSrc}
                   alt="Inspected Circuit"
-                  className="w-full h-full object-contain pointer-events-none"
+                  className="block max-w-full max-h-[460px] w-auto h-auto object-contain rounded-lg pointer-events-none"
                 />
                 {!isAnalyzing && renderSvgOverlay()}
               </div>
@@ -375,28 +382,20 @@ export const CircuitCanvasOverlay: React.FC<CircuitCanvasOverlayProps> = ({
           <div
             ref={sliderContainerRef}
             onTouchMove={handleTouchMove}
-            className="relative w-full h-[380px] sm:h-[500px] flex items-center justify-center bg-slate-950 overflow-hidden cursor-ew-resize"
+            className="relative inline-flex items-center justify-center max-w-full overflow-hidden cursor-ew-resize rounded-xl border border-cyan-900/50"
           >
-            {/* Top Labels */}
-            <div className="absolute top-3 left-3 z-30 px-2.5 py-1 rounded-md bg-slate-950/90 border border-slate-700 text-slate-300 text-[11px] font-bold pointer-events-none backdrop-blur-sm">
-              📷 ภาพต้นฉบับ
-            </div>
-            <div className="absolute top-3 right-3 z-30 px-2.5 py-1 rounded-md bg-slate-950/90 border border-cyan-700 text-cyan-300 text-[11px] font-bold pointer-events-none backdrop-blur-sm">
-              🔍 ภาพตรวจเช็ควงจร
-            </div>
-
-            {/* Base Layer: Inspected Image (Right Side) */}
-            <div className="absolute inset-0 w-full h-full flex items-center justify-center">
+            {/* Base Layer: Inspected Image with Overlay */}
+            <div className="relative inline-flex items-center justify-center">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={imageSrc}
                 alt="Inspected Circuit"
-                className="w-full h-full object-contain pointer-events-none"
+                className="block max-w-full max-h-[500px] w-auto h-auto object-contain pointer-events-none"
               />
               {!isAnalyzing && renderSvgOverlay()}
             </div>
 
-            {/* Clip Layer: Original Clean Image (Left Side) */}
+            {/* Clip Layer: Original Clean Image */}
             <div
               className="absolute inset-0 w-full h-full overflow-hidden pointer-events-none"
               style={{ clipPath: `polygon(0 0, ${sliderPos}% 0, ${sliderPos}% 100%, 0 100%)` }}
@@ -405,7 +404,7 @@ export const CircuitCanvasOverlay: React.FC<CircuitCanvasOverlayProps> = ({
               <img
                 src={imageSrc}
                 alt="Original Circuit"
-                className="w-full h-full object-contain pointer-events-none"
+                className="block max-w-full max-h-[500px] w-auto h-auto object-contain pointer-events-none"
               />
             </div>
 
@@ -413,11 +412,11 @@ export const CircuitCanvasOverlay: React.FC<CircuitCanvasOverlayProps> = ({
             <div
               onMouseDown={() => setIsDraggingSlider(true)}
               onTouchStart={() => setIsDraggingSlider(true)}
-              className="absolute top-0 bottom-0 z-30 w-1 bg-cyan-400 shadow-[0_0_12px_rgba(6,182,212,0.8)] cursor-ew-resize flex items-center justify-center pointer-events-auto"
+              className="absolute top-0 bottom-0 z-30 w-0.5 bg-cyan-400 shadow-[0_0_12px_rgba(6,182,212,0.9)] cursor-ew-resize flex items-center justify-center pointer-events-auto"
               style={{ left: `${sliderPos}%` }}
             >
-              <div className="w-8 h-8 rounded-full bg-slate-950 border-2 border-cyan-400 flex items-center justify-center text-cyan-300 shadow-xl transform active:scale-110 transition-transform">
-                <Sliders className="w-4 h-4" />
+              <div className="w-7 h-7 rounded-full bg-slate-950 border-2 border-cyan-400 flex items-center justify-center text-cyan-300 shadow-xl transform active:scale-110 transition-transform">
+                <Sliders className="w-3.5 h-3.5" />
               </div>
             </div>
           </div>
@@ -426,38 +425,38 @@ export const CircuitCanvasOverlay: React.FC<CircuitCanvasOverlayProps> = ({
         {/* MODE 3 & 4: ANNOTATED SINGLE VIEW OR ORIGINAL CLEAN VIEW */}
         {(viewMode === 'annotated' || viewMode === 'original') && (
           <div
-            className="relative w-full h-[380px] sm:h-[500px] flex items-center justify-center transition-transform duration-75 ease-out"
+            className="relative inline-flex items-center justify-center max-w-full transition-transform duration-75 ease-out"
             style={{
               transform: `scale(${zoomLevel}) translate(${panPos.x / zoomLevel}px, ${panPos.y / zoomLevel}px)`,
               transformOrigin: 'center center',
             }}
           >
-            {/* Background Image */}
+            {/* Background Image (Tight-fitting block image) */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={imageSrc}
               alt="Circuit View"
-              className="w-full h-full object-contain pointer-events-none max-h-[500px]"
+              className="block max-w-full max-h-[520px] w-auto h-auto object-contain rounded-xl pointer-events-none shadow-2xl"
               draggable={false}
             />
 
             {/* Analysis Scanline Animation */}
             {isAnalyzing && (
-              <div className="absolute inset-0 pointer-events-none z-20">
+              <div className="absolute inset-0 pointer-events-none z-20 rounded-xl overflow-hidden">
                 <div className="hud-scanline" />
                 <div className="absolute inset-0 bg-cyan-950/20 backdrop-blur-[1px] flex flex-col items-center justify-center gap-3">
                   <div className="relative flex items-center justify-center">
-                    <div className="w-16 h-16 rounded-full border-2 border-cyan-400 border-t-transparent animate-spin" />
-                    <div className="absolute w-8 h-8 rounded-full bg-cyan-500/30 animate-ping" />
+                    <div className="w-14 h-14 rounded-full border-2 border-cyan-400 border-t-transparent animate-spin" />
+                    <div className="absolute w-7 h-7 rounded-full bg-cyan-500/30 animate-ping" />
                   </div>
-                  <div className="px-4 py-1.5 rounded-full bg-slate-900/90 border border-cyan-500/60 text-cyan-300 text-xs font-mono tracking-wider animate-pulse shadow-lg">
+                  <div className="px-4 py-1 rounded-full bg-slate-900/90 border border-cyan-500/60 text-cyan-300 text-xs font-mono tracking-wider animate-pulse shadow-lg">
                     🔍 AI กำลังวิเคราะห์สายไฟและชิ้นส่วนวงจร...
                   </div>
                 </div>
               </div>
             )}
 
-            {/* SVG Overlay (Only when annotated) */}
+            {/* SVG Overlay (Tightly mapped 1:1 on top of image pixels) */}
             {!isAnalyzing && viewMode === 'annotated' && renderSvgOverlay()}
           </div>
         )}
