@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import Link from 'next/link';
 import confetti from 'canvas-confetti';
 import { Navbar } from '@/components/Navbar';
 import { CameraView } from '@/components/CameraView';
@@ -8,31 +9,22 @@ import { CircuitCanvasOverlay } from '@/components/CircuitCanvasOverlay';
 import { DiagnosticPanel } from '@/components/DiagnosticPanel';
 import { CircuitSchematicModal } from '@/components/CircuitSchematicModal';
 import { SampleGalleryModal } from '@/components/SampleGalleryModal';
-import { ApiKeyModal } from '@/components/ApiKeyModal';
 import { CircuitAnalysisResult } from '@/types/circuit';
 import { SAMPLE_PRESETS } from '@/lib/circuitRules';
 import { playSuccessSound, playErrorSound } from '@/lib/soundEffects';
-import { Sparkles, HelpCircle, ShieldCheck, AlertCircle, RefreshCw } from 'lucide-react';
+import { getAdminSettings, saveInspectionRecord } from '@/lib/historyStorage';
+import { Sparkles, AlertCircle, RefreshCw, Lock, ShieldCheck } from 'lucide-react';
 
 export default function Home() {
   const [currentImage, setCurrentImage] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
   const [analysisResult, setAnalysisResult] = useState<CircuitAnalysisResult | null>(null);
   const [selectedComponentId, setSelectedComponentId] = useState<string | null>(null);
-  const [customApiKey, setCustomApiKey] = useState<string>('');
 
   // Modals state
   const [isSchematicOpen, setIsSchematicOpen] = useState<boolean>(false);
   const [isSamplesOpen, setIsSamplesOpen] = useState<boolean>(false);
-  const [isApiKeyOpen, setIsApiKeyOpen] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem('circuit_detector_gemini_key') || '';
-      setCustomApiKey(stored);
-    }
-  }, []);
 
   const triggerConfetti = () => {
     try {
@@ -53,16 +45,19 @@ export default function Home() {
     setErrorMessage(null);
     setSelectedComponentId(null);
 
+    const settings = getAdminSettings();
+    const activeApiKey = settings.geminiApiKey || '';
+
     try {
       const res = await fetch('/api/analyze', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-gemini-key': customApiKey,
+          'x-gemini-key': activeApiKey,
         },
         body: JSON.stringify({
           image: base64Image,
-          apiKey: customApiKey,
+          apiKey: activeApiKey,
         }),
       });
 
@@ -70,6 +65,9 @@ export default function Home() {
       if (json.success && json.data) {
         const result: CircuitAnalysisResult = json.data;
         setAnalysisResult(result);
+
+        // Auto-save to Admin History database
+        saveInspectionRecord(base64Image, result);
 
         if (result.status === 'CORRECT') {
           playSuccessSound();
@@ -79,8 +77,7 @@ export default function Home() {
         }
       } else {
         if (json.errorCode === 'GEMINI_API_KEY_REQUIRED') {
-          setIsApiKeyOpen(true);
-          setErrorMessage('กรุณาใส่ Gemini API Key ด้านล่างเพื่อให้ AI Vision เริ่มสแกนและตรวจสอบวงจรจริงของคุณ');
+          setErrorMessage('ยังไม่ได้ตั้งค่า Gemini API Key ในระบบหลังบ้าน กรุณาเข้าสู่ระบบหลังบ้าน (PIN: 0000) เพื่อใส่ API Key');
         } else {
           const errText = json.error || json.details || 'เกิดข้อผิดพลาดในการวิเคราะห์';
           setErrorMessage(errText);
@@ -109,6 +106,9 @@ export default function Home() {
       setAnalysisResult(sample.result);
       setIsAnalyzing(false);
 
+      // Save sample inspection into Admin History
+      saveInspectionRecord(sample.imageUrl, sample.result, `Preset Sample: ${sample.title}`);
+
       if (sample.result.status === 'CORRECT') {
         playSuccessSound();
         triggerConfetti();
@@ -131,8 +131,6 @@ export default function Home() {
       <Navbar
         onOpenSchematic={() => setIsSchematicOpen(true)}
         onOpenSamples={() => setIsSamplesOpen(true)}
-        onOpenApiKey={() => setIsApiKeyOpen(true)}
-        hasCustomApiKey={!!customApiKey}
       />
 
       {/* Main Container */}
@@ -144,7 +142,7 @@ export default function Home() {
               ระบบตรวจจับและตรวจสอบการต่อวงจร Arduino Nano + LED
             </h1>
             <p className="text-xs sm:text-sm text-slate-400">
-              วิเคราะห์สายไฟ, พิน D13/GND, ขั้วบวก/ลบ LED และตัวต้านทาน 220Ω ผ่านกล้องแบบอัจฉริยะ
+              วิเคราะห์สายไฟ, พิน D13/GND, ขั้วบวก/ลบ LED และตัวต้านทาน 220Ω ผ่านกล้องแบบอัจฉริยะ (Gemini Pro)
             </p>
           </div>
 
@@ -161,15 +159,22 @@ export default function Home() {
 
         {/* Error Alert Message if any */}
         {errorMessage && (
-          <div className="flex items-start gap-3 p-4 rounded-xl bg-red-950/80 border border-red-800 text-red-200 text-xs">
-            <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
-            <div className="space-y-1">
-              <span className="font-bold">เกิดข้อผิดพลาด:</span>
-              <p>{errorMessage}</p>
-              <p className="text-[11px] text-red-300/80">
-                หากใช้การสแกนด้วยกล้องจริง แนะนำให้ตรวจสอบว่าได้ตั้งค่า Gemini API Key ถูกต้อง และรูปภาพมีแสงสว่างเพียงพอ
-              </p>
+          <div className="flex items-start justify-between gap-3 p-4 rounded-xl bg-red-950/80 border border-red-800 text-red-200 text-xs">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <span className="font-bold">แจ้งเตือน:</span>
+                <p>{errorMessage}</p>
+              </div>
             </div>
+
+            <Link
+              href="/admin"
+              className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-900/80 hover:bg-red-800 text-red-100 font-bold border border-red-700 text-xs transition-colors"
+            >
+              <Lock className="w-3.5 h-3.5" />
+              <span>ไปที่ระบบหลังบ้าน (PIN: 0000)</span>
+            </Link>
           </div>
         )}
 
@@ -188,7 +193,7 @@ export default function Home() {
                 />
 
                 <div className="flex items-center justify-between p-3 rounded-xl bg-slate-900/80 border border-slate-800 text-xs text-slate-400">
-                  <span>💡 เลื่อนเมาส์หรือแตะที่กรอบสีบนภาพ เพื่อดูรายละเอียดชิ้นส่วน</span>
+                  <span>💡 แตะที่จุดมาร์กเกอร์บนภาพ เพื่อดูรายละเอียดชิ้นส่วน</span>
                   <button
                     onClick={handleClear}
                     className="flex items-center gap-1 text-cyan-400 hover:text-cyan-300 font-semibold"
@@ -224,7 +229,17 @@ export default function Home() {
       <footer className="w-full border-t border-slate-800 bg-slate-950/90 py-5 text-center text-xs text-slate-500">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
           <span>Arduino Nano + LED Circuit Detector &bull; AI Powered Inspection</span>
-          <span>Deployable on Vercel &bull; GitHub Repository Ready</span>
+          <div className="flex items-center gap-3">
+            <Link
+              href="/admin"
+              className="text-slate-400 hover:text-cyan-400 flex items-center gap-1 transition-colors"
+            >
+              <Lock className="w-3 h-3" />
+              <span>เข้าสู่ระบบหลังบ้าน (Admin)</span>
+            </Link>
+            <span>&bull;</span>
+            <span>Deployable on Vercel</span>
+          </div>
         </div>
       </footer>
 
@@ -238,12 +253,6 @@ export default function Home() {
         isOpen={isSamplesOpen}
         onClose={() => setIsSamplesOpen(false)}
         onSelectSample={handleSelectSample}
-      />
-
-      <ApiKeyModal
-        isOpen={isApiKeyOpen}
-        onClose={() => setIsApiKeyOpen(false)}
-        onApiKeySaved={(key) => setCustomApiKey(key)}
       />
     </div>
   );
